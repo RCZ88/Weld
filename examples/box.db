@@ -1,0 +1,29 @@
+design "Box and Lid" units=mm
+note "100 x 70 x 40 box, 2.4 wall; the lid uses $clear.slip so it drops on"
+note "the lid is parked beside the box so both are visible in one view"
+
+profile box_wall
+  rect w=100 h=70 r=$fillet.md
+  hole rect w=100-$wall.std*2 h=70-$wall.std*2 r=$fillet.md-$wall.std
+
+profile box_floor
+  rect w=100 h=70 r=$fillet.md
+
+# The lid skirt must clear the box outside: outer size + two clearances.
+profile lid_skirt
+  rect w=100+$clear.slip*2+$wall.std*2 h=70+$clear.slip*2+$wall.std*2 r=$fillet.md
+  hole rect w=100+$clear.slip*2 h=70+$clear.slip*2 r=$fillet.md
+
+profile lid_top
+  rect w=100+$clear.slip*2+$wall.std*2 h=70+$clear.slip*2+$wall.std*2 r=$fillet.md
+
+solid walls from=box_wall extrude h=40
+solid floor from=box_floor extrude h=$wall.std
+solid skirt from=lid_skirt extrude h=10
+solid cap   from=lid_top  extrude h=$wall.std
+
+assembly
+  part floor at=(0,0,0)
+  part walls at=(0,0,$wall.std)
+  part skirt at=(0,120,0)
+  part cap   at=(0,120,10)

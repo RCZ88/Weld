@@ -1,0 +1,22 @@
+design "Coffee Mug" units=mm
+note "80 dia x 95 tall, 2.4 wall - anchored to a real mug"
+note "the handle overlaps the body on purpose - it is welded there"
+note "so the interpenetration warning is accepted, not a mistake"
+
+# One revolve builds the whole vessel. The pen goes up the outside, across the
+# rim, down the inside, then back to the axis - so the cavity is real geometry
+# and the part comes out watertight without any boolean subtraction.
+profile body_section
+  path (0,0) (40,0) (40,95) (40-$wall.std,95) (40-$wall.std,$wall.std*2) (0,$wall.std*2)
+
+# The handle is a closed loop: a rounded slot with a smaller slot cut out of it.
+profile handle_ring
+  slot w=18 h=58
+  hole slot w=18-$wall.std*2 h=58-$wall.std*2
+
+solid body from=body_section revolve segments=72
+solid handle from=handle_ring extrude h=10
+
+assembly
+  part body at=(0,0,0)
+  part handle at=(44,0,50) rot=(90,0,0)

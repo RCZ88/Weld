@@ -1,0 +1,6 @@
+texture "mossy_cobble" size=16 roughness=0.9
+fill color=#6b6b6b
+noise dark=#55555570 light=#88888870 scale=3 amount=0.6
+brick color=#6b6b6b mortar=#3f3f3f w=8 h=5 line=1 jitter=0.18
+scatter color=#4a7a3a amount=0.22 seed=3
+bevel light=#9a9a9a50 dark=#40404060

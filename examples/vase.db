@@ -1,0 +1,10 @@
+design "Twisted Vase" units=mm
+note "180mm vase, hexagonal, twisted 240 deg, 1.2 wall for a vase-mode print"
+
+profile shell
+  ngon n=6 r=45
+  # a hexagon's r is to its corners, so a 1.2 wall needs 1.2/cos(30) of radius.
+  # The linter will tell you if you forget: it measures the real perpendicular wall.
+  hole ngon n=6 r=45-$wall.thin/0.866
+
+solid body from=shell extrude h=180 twist=240 steps=90

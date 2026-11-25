@@ -1,0 +1,6 @@
+model "supply_crate"
+bone box pivot=(0,0,0)
+  box from=(-8,0,-8) to=(8,16,8) color=#6b4a2a
+  box from=(-8,0,-8) to=(8,2,8) color=#7a5634
+  box from=(-8,14,-8) to=(8,16,8) color=#7a5634
+  box from=(-9,6,-9) to=(9,10,9) color=#4a3420

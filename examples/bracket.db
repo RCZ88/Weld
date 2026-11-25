@@ -1,0 +1,20 @@
+design "L Bracket" units=mm
+note "80 x 60 shelf bracket, 4.8 thick, four M3 holes"
+
+# Prismatic: the same L-shaped cross-section all the way through, so extrude.
+profile l_section
+  poly (0,0) (80,0) (80,12) (12,12) (12,60) (0,60)
+
+profile face_plate
+  rect w=80 h=60 r=$fillet.md
+  hole circle r=$m3.hole/2 at=(-25,-18)
+  hole circle r=$m3.hole/2 at=(25,-18)
+  hole circle r=$m3.hole/2 at=(-25,18)
+  hole circle r=$m3.hole/2 at=(25,18)
+
+solid rib from=l_section extrude h=$wall.structural
+solid plate from=face_plate extrude h=$wall.std
+
+assembly
+  part rib at=(0,0,0)
+  part plate at=(0,0,-$wall.std) rot=(0,0,0)

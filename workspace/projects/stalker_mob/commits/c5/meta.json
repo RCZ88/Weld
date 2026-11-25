@@ -1,0 +1,22 @@
+{
+  "id": "c5",
+  "tag": "v3-b1",
+  "branch": "feat/amber-optics",
+  "parentId": "c3",
+  "mergeParentId": null,
+  "time": "14:31",
+  "status": "PASS",
+  "note": "Swapped visor optics to machined amber emitter",
+  "bounds": "16\u00d732\u00d76",
+  "struct": "6B \u00b7 7BX",
+  "anim": "lunge",
+  "errors": 0,
+  "params": {
+    "armLen": 10.6,
+    "visorColor": 16096779,
+    "torsoW": 4.4,
+    "hasVisor": true
+  },
+  "report": "PASS: Amber optical emitter compiled (#f59e0b).\nZero geometry regressions from v3.",
+  "dsl": "<<<DESIGN model=\"stalker\" box=(16,32,6)\nbone torso pivot=(0,16,0) box=(9,14,6)\nbone head pivot=(0,32,0) box=(8,8,8) [attach=visor color=#f59e0b]\nbone left_arm pivot=(-8,30,0) box=(4,30,4)\nbone right_arm pivot=(8,30,0) box=(4,30,4)\nanim lunge duration=0.50 loop=true\n>>>"
+}

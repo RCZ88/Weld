@@ -1,0 +1,20 @@
+{
+  "id": "t1",
+  "tag": "v1",
+  "branch": "main",
+  "parentId": null,
+  "mergeParentId": null,
+  "time": "09:40",
+  "status": "PASS",
+  "note": "Base iron plate noise + 16x16 pixel grid",
+  "bounds": "64\u00d764 px",
+  "struct": "4 PBR MAPS",
+  "anim": "tile",
+  "errors": 0,
+  "params": {
+    "rustLevel": 0.35,
+    "color": 5395035
+  },
+  "report": "PASS: Seamless edge wrap verified across X/Y. Generated Albedo, Normal, Roughness, Metalness.",
+  "dsl": "<<<DESIGN texture=\"rusted_iron\" size=64 seamless=true\nlayer base fill=#52525b noise=perlin(0.18)\nlayer rust mask=fbm(scale=4,thresh=0.65) color=#9a3412\n>>>"
+}

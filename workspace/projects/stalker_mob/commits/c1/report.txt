@@ -1,0 +1,3 @@
+ERROR [E104] line 4: Left shoulder pivot disconnected by 2.0u.
+ERROR [E201] line 2: 2 non-manifold seam edges on torso-spine weld.
+WARN [W012] line 5: Arms terminate above hip plane.

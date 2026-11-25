@@ -1,0 +1,2828 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>DesignBridge Studio — Spatial CAD IDE</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+
+<!-- Vendored first, CDN second.
+     Drop tailwind.js and three.min.js into a vendor/ folder next to this file
+     and the Studio runs with no internet at all — matching the backend, which
+     has no dependencies either. Without the folder these fall back to the CDN. -->
+<script src="vendor/tailwind.js"></script>
+<script>
+  if (typeof tailwind === 'undefined') {
+    document.write('<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"><\/script>');
+  }
+</script>
+<script src="vendor/three.min.js"></script>
+<script>
+  if (typeof THREE === 'undefined') {
+    document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>');
+  }
+</script>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        colors: {
+          matte: {
+            950: "#090a0d", 900: "#0d0e12", 850: "#111216",
+            800: "#15171d", 750: "#1a1d24", 700: "#22252e", 600: "#2e3340",
+          }
+        },
+        fontFamily: {
+          sans: ['"Geist"', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+          mono: ['"JetBrains Mono"', '"SF Mono"', 'monospace'],
+        },
+        boxShadow: {
+          'glass-pod': '0 24px 50px -12px rgba(0, 0, 0, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 0 0 1px rgba(255, 255, 255, 0.08)',
+          'glass-card': 'inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 4px 16px rgba(0, 0, 0, 0.35)',
+          'glass-well': 'inset 0 2px 4px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.06)',
+          'glow-white': '0 0 20px -3px rgba(255, 255, 255, 0.35)',
+          'glow-emerald': '0 0 14px -2px rgba(16, 185, 129, 0.55)',
+          'glow-amber': '0 0 14px -2px rgba(245, 158, 11, 0.55)',
+        }
+      }
+    }
+  };
+</script>
+<style>
+  /* ===================================================================
+   * DESIGN TOKENS — strict neutral palette, functional signal discipline
+   * Emerald  = verified / watertight / clean compile ONLY
+   * Amber    = warnings, decisions to judge
+   * Crimson  = errors, non-manifold
+   * White    = primary action keys. Nothing else is saturated.
+   * =================================================================== */
+  :root {
+    --glass-bg: rgba(18, 20, 26, 0.76);
+    --glass-card-bg: rgba(26, 28, 36, 0.68);
+    --glass-border: rgba(255, 255, 255, 0.14);
+    --left-pod-w: 300px;
+    --right-pod-w: 430px;
+  }
+
+  body {
+    margin: 0; padding: 0;
+    overflow: hidden;
+    font-family: 'Geist', -apple-system, sans-serif;
+    background-color: #08090c;
+    color: #f4f4f5;
+    user-select: none;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Micro-tactile IDE switch & key interactions */
+  .tactile-btn {
+    transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, color 0.16s ease;
+  }
+  .tactile-btn:hover { transform: translateY(-1px); }
+  .tactile-btn:active { transform: translateY(0.5px) scale(0.97); }
+
+  /* Authentic frosted glass: flat base, optical blur, double specular rim */
+  .glass-pod-panel {
+    background: rgba(18, 20, 26, 0.72);
+    backdrop-filter: blur(28px) saturate(140%);
+    -webkit-backdrop-filter: blur(28px) saturate(140%);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 0 12px rgba(255, 255, 255, 0.02);
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .glass-card-item {
+    background: rgba(26, 28, 36, 0.62);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    transition: background 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+  }
+  .glass-card-item:hover {
+    background: rgba(36, 39, 50, 0.75);
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 4px 16px rgba(0,0,0,0.3);
+  }
+  /* Active state is NEUTRAL — selection is shown by elevation, not by hue */
+  .glass-card-active {
+    background: rgba(42, 46, 58, 0.82);
+    border-color: rgba(255, 255, 255, 0.24);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 8px 24px -4px rgba(0, 0, 0, 0.5);
+  }
+
+  .recessed-well {
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
+
+  /* Precision scrollbars */
+  ::-webkit-scrollbar { width: 3.5px; height: 3.5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 9999px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.35); }
+
+  /* Dual-frequency CAD workbench grid: 10mm minor + 50mm major coordinate divisions */
+  .cad-technical-workbench {
+    background-image:
+      linear-gradient(to right, rgba(255, 255, 255, 0.07) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.07) 1px, transparent 1px),
+      linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+    background-size: 50px 50px, 50px 50px, 10px 10px, 10px 10px;
+  }
+
+  @keyframes tech-pulse {
+    0%, 100% { opacity: 1; filter: drop-shadow(0 0 4px currentColor); }
+    50% { opacity: 0.35; filter: none; }
+  }
+  .animate-tech-pulse { animation: tech-pulse 1.8s ease-in-out infinite; }
+
+  @keyframes bus-activity {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(200%); }
+  }
+  .animate-bus { animation: bus-activity 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+
+  @keyframes modalIn {
+    from { opacity: 0; transform: translateY(8px) scale(0.985); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .animate-modal-in { animation: modalIn 0.18s cubic-bezier(0.16, 1, 0.3, 1); }
+
+  #left-satellite-pod { width: var(--left-pod-w); }
+  #right-prompt-slab { width: var(--right-pod-w); }
+
+  /* Pod resize handles — neutral, revealed on approach */
+  .pod-resizer {
+    position: absolute; top: 24px; bottom: 24px; width: 14px;
+    z-index: 40; cursor: col-resize;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .pod-resizer-left { right: -5px; }
+  .pod-resizer-right { left: -5px; }
+  .pod-resizer-rail {
+    position: absolute; top: 0; bottom: 0; width: 2px;
+    border-radius: 999px; background: transparent;
+    transition: background 0.18s ease;
+  }
+  .pod-resizer-pill {
+    width: 4px; height: 44px; border-radius: 999px;
+    background: rgba(255, 255, 255, 0.16);
+    transition: all 0.18s ease;
+  }
+  .pod-resizer:hover .pod-resizer-rail,
+  .pod-resizer.dragging .pod-resizer-rail { background: rgba(255, 255, 255, 0.22); }
+  .pod-resizer:hover .pod-resizer-pill,
+  .pod-resizer.dragging .pod-resizer-pill {
+    background: #f4f4f5; height: 64px;
+    box-shadow: 0 0 12px rgba(255, 255, 255, 0.45);
+  }
+
+  .dag-node { cursor: pointer; transition: opacity 0.15s ease; }
+  .dag-node:hover { opacity: 0.9; }
+
+  /* Syntax well */
+  .dsl-line { display: flex; align-items: baseline; gap: 0.5rem; padding: 1px 4px; border-radius: 3px; }
+  .dsl-line:hover { background: rgba(255, 255, 255, 0.04); }
+  .dsl-gutter { color: #52525b; user-select: none; width: 1.4rem; text-align: right; font-size: 9px; flex-shrink: 0; }
+  .tok-key { color: #a5b4fc; }
+  .tok-name { color: #7dd3fc; }
+  .tok-str { color: #6ee7b7; }
+  .tok-attr { color: #a1a1aa; }
+  .tok-num { color: #e4e4e7; }
+  .tok-hex { color: #fcd34d; }
+  .tok-com { color: #52525b; font-style: italic; }
+</style>
+</head>
+<body class="h-screen w-screen relative overflow-hidden bg-[#08090c] cad-technical-workbench font-sans antialiased">
+
+<!-- ======================================================================= -->
+<!-- 1. FULLSCREEN SPATIAL 3D VIEWPORT                                        -->
+<!-- ======================================================================= -->
+<div class="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing z-0" id="three-viewport"></div>
+
+<!-- Radial studio vignette -->
+<div class="absolute inset-0 pointer-events-none z-[1] bg-[radial-gradient(circle_at_center,transparent_30%,rgba(8,9,12,0.85)_100%)]"></div>
+
+<!-- Technical sub-axes crosshair & scale dimension marks -->
+<div class="absolute inset-x-0 top-1/2 -translate-y-1/2 h-[1px] bg-white/[0.08] pointer-events-none z-[1] flex justify-between px-20">
+  <span class="font-mono text-[8px] text-zinc-600 -translate-y-3.5 select-none" id="axis-xneg">-X 1280.0</span>
+  <span class="font-mono text-[8px] text-zinc-600 -translate-y-3.5 select-none" id="axis-xpos">+X 1280.0</span>
+</div>
+<div class="absolute inset-y-0 left-1/2 -translate-x-1/2 w-[1px] bg-white/[0.08] pointer-events-none z-[1] flex flex-col justify-between py-20 items-center">
+  <span class="font-mono text-[8px] text-zinc-600 translate-x-4 select-none" id="axis-ypos">+Y 720.0</span>
+  <span class="font-mono text-[8px] text-zinc-600 translate-x-4 select-none" id="axis-yneg">-Y 720.0</span>
+</div>
+
+<!-- Micro studio corner calibration marks -->
+<div class="absolute top-4 left-4 font-mono text-[9px] text-zinc-500 pointer-events-none z-10 flex items-center gap-2">
+  <span class="w-2 h-2 border-l border-t border-zinc-500 inline-block"></span>
+  <span class="tracking-widest">SPATIAL_GRID // 0.0.1_M</span>
+  <span class="text-zinc-600">| AXIS_SNAP [10mm/50mm]</span>
+</div>
+<div class="absolute top-4 right-4 font-mono text-[9px] text-zinc-500 pointer-events-none z-10 flex items-center gap-2">
+  <span class="text-zinc-600">RENDER_PIPE: WEBGL_HARDWARE_ACCEL</span>
+  <span class="tracking-widest">COORD // NORMAL_Z_UP</span>
+  <span class="w-2 h-2 border-r border-t border-zinc-500 inline-block"></span>
+</div>
+
+<!-- ======================================================================= -->
+<!-- 2. TOP ANCHORED HUD: COMMAND BAR & STUDIO STRIP                          -->
+<!-- ======================================================================= -->
+<header class="absolute top-5 inset-x-0 flex items-center justify-between px-7 z-30 pointer-events-none gap-4">
+  <!-- Studio branding & engine pill -->
+  <div class="pointer-events-auto flex items-center gap-2.5 glass-pod-panel px-3.5 py-1.5 rounded-full">
+    <div class="w-7 h-7 rounded-full bg-gradient-to-b from-white/25 to-white/5 border border-white/20 flex items-center justify-center text-zinc-100 shadow-md tactile-btn cursor-pointer" id="brand-home-btn" title="DesignBridge Studio">
+      <span class="material-symbols-outlined text-[15px]">deployed_code</span>
+    </div>
+    <div class="flex items-center gap-2 pr-1 border-r border-white/10">
+      <span class="font-semibold text-xs tracking-tight text-white font-mono">DESIGNBRIDGE</span>
+      <span class="font-mono text-[9px] font-semibold px-2 py-0.5 rounded-full bg-white/[0.08] text-zinc-300 border border-white/15">CAD·OS</span>
+      <span class="font-mono text-[8.5px] font-semibold px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-400 border border-white/10 cursor-pointer hover:text-white transition-colors" id="engine-status-pill" title="Storage engine status — click for Studio settings">CONNECTING…</span>
+    </div>
+    <button class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 font-mono text-[10px] font-medium text-zinc-300 hover:text-white tactile-btn" id="top-branch-map-btn" title="Open branch map (B)">
+      <span class="material-symbols-outlined text-[13px] text-zinc-400">account_tree</span>
+      <span id="top-branch-label">main</span>
+      <span class="text-zinc-500" id="top-commit-label">@v1</span>
+    </button>
+  </div>
+
+  <!-- Universal action & rig strip -->
+  <div class="pointer-events-auto flex items-center gap-3 glass-pod-panel px-4 py-1.5 rounded-full">
+    <div class="flex items-center gap-2 pl-1 pr-3 border-r border-white/10">
+      <span class="relative flex h-2 w-2">
+        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" id="header-led-ping"></span>
+        <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.7)]" id="header-led-dot"></span>
+      </span>
+      <span class="font-mono text-xs font-semibold text-white" id="header-project-name">—</span>
+      <span class="font-mono text-[9px] font-semibold px-2 py-0.5 rounded-full bg-white/[0.08] text-zinc-300 border border-white/15 uppercase" id="header-track-pill">MODEL</span>
+      <span class="font-mono text-[9px] font-semibold px-2 py-0.5 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 shadow-glow-emerald" id="header-status-pill">
+        <span class="w-1 h-1 rounded-full bg-emerald-400"></span><span id="header-status-text">WATERTIGHT</span>
+      </span>
+    </div>
+
+    <button class="flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 font-mono text-[10px] text-zinc-400 hover:text-zinc-200 tactile-btn" id="cmd-k-btn">
+      <span class="material-symbols-outlined text-[13px]">search</span>
+      <span class="hidden md:inline">Search actions...</span>
+      <kbd class="px-1.5 py-0.5 rounded bg-white/10 text-[9px] text-zinc-300 border border-white/10 font-mono">⌘K</kbd>
+    </button>
+
+    <div class="hidden lg:flex items-center gap-2 pl-2 pr-1 border-l border-white/10" title="Compiled prompt context size">
+      <span class="font-mono text-[9px] font-medium text-zinc-400 uppercase tracking-wider">CTX</span>
+      <div class="flex items-center gap-0.5" id="token-bars">
+        <div class="w-1.5 h-2.5 rounded-sm bg-zinc-200"></div>
+        <div class="w-1.5 h-2.5 rounded-sm bg-zinc-200"></div>
+        <div class="w-1.5 h-2.5 rounded-sm bg-zinc-200"></div>
+        <div class="w-1.5 h-2.5 rounded-sm bg-zinc-400"></div>
+        <div class="w-1.5 h-2.5 rounded-sm bg-white/15"></div>
+      </div>
+      <span class="font-mono text-[11px] font-medium text-zinc-200" id="header-token-count">—</span>
+    </div>
+  </div>
+
+  <!-- Viewport mode & blueprint toggle -->
+  <div class="pointer-events-auto flex items-center gap-3">
+    <button class="flex items-center gap-2 px-3.5 py-1.5 rounded-full glass-pod-panel text-zinc-300 hover:text-white border border-white/15 tactile-btn" id="toggle-2d-ortho-btn" title="Toggle 2D orthographic blueprints">
+      <span class="material-symbols-outlined text-[15px] text-zinc-300">square_foot</span>
+      <span class="font-mono text-[10px] font-semibold tracking-wide hidden xl:inline">2D_ORTHO_VIEWS</span>
+      <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_#10b981]" id="ortho-status-dot"></span>
+    </button>
+
+    <div class="flex items-center glass-pod-panel p-1 rounded-full">
+      <button class="flex items-center gap-1.5 px-3 py-1 rounded-full font-mono text-[10px] font-medium text-zinc-400 hover:text-zinc-200 tactile-btn" id="open-branch-graph-btn" title="Visual commit & branch map (B)">
+        <span class="material-symbols-outlined text-[13px]">hub</span>
+        <span class="hidden xl:inline">BRANCHES</span>
+      </button>
+      <button class="flex items-center gap-1.5 px-3 py-1 rounded-full font-mono text-[10px] font-medium text-zinc-400 hover:text-zinc-200 tactile-btn" id="open-settings-btn" title="Studio storage & LLM relay settings (,)">
+        <span class="material-symbols-outlined text-[13px]">tune</span>
+        <span class="hidden 2xl:inline">SETTINGS</span>
+      </button>
+    </div>
+
+    <button class="flex items-center gap-2 px-4 py-2 rounded-full bg-white hover:bg-zinc-100 active:bg-zinc-200 text-zinc-950 font-mono text-xs font-semibold shadow-glow-white tactile-btn" id="new-design-btn" title="Start a new asset (N)">
+      <span class="material-symbols-outlined text-[15px] font-bold">add</span>
+      <span>NEW_ASSET</span>
+    </button>
+  </div>
+</header>
+
+<!-- ======================================================================= -->
+<!-- 3. LEFT SATELLITE POD: CARTRIDGES, REVISIONS & HARDWARE BUFFER           -->
+<!-- ======================================================================= -->
+<aside class="absolute left-6 top-24 bottom-24 flex flex-col z-20 pointer-events-none" id="left-satellite-pod">
+  <div class="pointer-events-auto h-full flex flex-col p-4 rounded-[26px] glass-pod-panel relative overflow-hidden" id="left-pod-content">
+    <div class="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/35 to-transparent"></div>
+    <div class="pod-resizer pod-resizer-left" data-resize="left" title="Drag to resize · double-click to reset">
+      <div class="pod-resizer-rail"></div><div class="pod-resizer-pill"></div>
+    </div>
+
+    <!-- A. SCENE CARTRIDGES -->
+    <div class="flex items-center justify-between pb-3 border-b border-white/[0.08]">
+      <div class="flex items-center gap-2">
+        <span class="w-1.5 h-1.5 rounded-full bg-zinc-300"></span>
+        <span class="font-mono text-[10px] font-semibold text-zinc-200 tracking-wider uppercase">SCENE CARTRIDGES</span>
+        <span class="font-mono text-[9px] font-medium px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-300 border border-white/10" id="project-count-pill">00</span>
+      </div>
+      <div class="flex items-center gap-1.5">
+        <button class="w-6 h-6 rounded-full bg-white/[0.08] hover:bg-white/[0.18] border border-white/15 flex items-center justify-center text-zinc-300 hover:text-white tactile-btn" id="left-new-design-btn" title="New asset (N)">
+          <span class="material-symbols-outlined text-[14px]">add</span>
+        </button>
+        <button class="w-6 h-6 rounded-full bg-white/[0.06] hover:bg-white/[0.15] border border-white/10 flex items-center justify-center text-zinc-400 hover:text-white tactile-btn" id="min-left-pod" title="Collapse panel ([)">
+          <span class="material-symbols-outlined text-[14px]">remove</span>
+        </button>
+      </div>
+    </div>
+    <div class="py-3 flex flex-col gap-1.5 max-h-[190px] overflow-y-auto pr-0.5" id="project-list-slot"></div>
+
+    <!-- B. RELAY REVISIONS -->
+    <div class="flex-1 flex flex-col min-h-0 pt-2.5 border-t border-white/[0.08]">
+      <div class="flex items-center justify-between mb-2 gap-1.5">
+        <div class="flex items-center gap-1.5 min-w-0">
+          <span class="font-mono text-[9px] font-semibold text-zinc-300 uppercase tracking-wider">RELAY REVISIONS</span>
+        </div>
+        <div class="flex items-center gap-1 shrink-0">
+          <button class="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/[0.07] hover:bg-white/[0.15] border border-white/12 font-mono text-[9px] font-semibold text-zinc-200 tactile-btn" id="quick-fork-btn" title="Fork a branch from the active revision">
+            <span class="material-symbols-outlined text-[11px]">call_split</span><span>FORK</span>
+          </button>
+          <button class="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/[0.07] hover:bg-white/[0.15] border border-white/12 font-mono text-[9px] font-semibold text-zinc-200 tactile-btn" id="left-open-map-btn" title="Expand branch map (B)">
+            <span class="material-symbols-outlined text-[11px]">hub</span><span>MAP</span>
+          </button>
+        </div>
+      </div>
+      <div class="flex items-center gap-1 overflow-x-auto pb-2 mb-1.5" id="branch-pills-slot"></div>
+      <div class="flex-1 overflow-y-auto space-y-2 pr-1 min-h-0" id="commit-rail-slot"></div>
+    </div>
+
+    <!-- C. HARDWARE BUFFER ENGINE -->
+    <div class="mt-3 p-3 rounded-2xl bg-black/60 border border-white/[0.1] shadow-glass-well flex flex-col gap-2 relative overflow-hidden">
+      <div class="absolute top-0 left-0 right-0 h-[1.5px] bg-white/[0.06] overflow-hidden">
+        <div class="w-20 h-full bg-gradient-to-r from-transparent via-emerald-400 to-transparent animate-bus"></div>
+      </div>
+      <div class="flex items-center justify-between font-mono text-[9px]">
+        <div class="flex items-center gap-1.5">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-tech-pulse text-emerald-400"></span>
+          <span class="text-zinc-300 uppercase font-semibold">HARDWARE BUFFER</span>
+        </div>
+        <span class="text-zinc-400 font-mono text-[8px] bg-white/[0.05] px-1.5 py-0.5 rounded border border-white/10" id="hw-bus">— MB/s BUS</span>
+      </div>
+      <div class="flex flex-col gap-1.5 font-mono">
+        <div class="flex items-center justify-between text-[8px]">
+          <span class="text-zinc-400">VRAM // MESH_BUFFER</span>
+          <span class="text-zinc-200 font-semibold" id="hw-vram">— / 128 MB</span>
+        </div>
+        <div class="grid grid-cols-12 gap-1 w-full" id="hw-segments"></div>
+        <div class="grid grid-cols-3 gap-1.5 pt-1 text-[8px]">
+          <div class="p-1 rounded bg-white/[0.04] border border-white/[0.06] flex flex-col">
+            <span class="text-zinc-500">TRIANGLES</span>
+            <span class="text-zinc-200 font-semibold" id="hw-tris">—</span>
+          </div>
+          <div class="p-1 rounded bg-white/[0.04] border border-white/[0.06] flex flex-col">
+            <span class="text-zinc-500">REVISIONS</span>
+            <span class="text-zinc-200 font-semibold" id="hw-queue">—</span>
+          </div>
+          <div class="p-1 rounded bg-white/[0.04] border border-white/[0.06] flex flex-col">
+            <span class="text-zinc-500">FRAME TIME</span>
+            <span class="text-emerald-400 font-semibold" id="hw-latency">— ms</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pointer-events-auto hidden items-center gap-2 p-2 px-3 rounded-full glass-pod-panel cursor-pointer tactile-btn text-zinc-300 hover:text-white self-start mt-1" id="left-pod-collapsed">
+    <span class="material-symbols-outlined text-[16px] text-zinc-300">view_in_ar</span>
+    <span class="font-mono text-[10px] font-semibold" id="left-collapsed-label">SCENE</span>
+    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+    <span class="material-symbols-outlined text-[14px] text-zinc-400 ml-1">unfold_more</span>
+  </div>
+</aside>
+
+<!-- ======================================================================= -->
+<!-- 4. RIGHT CONTROL SLAB: CAD PROMPT ENGINE & COMPILER MODULE               -->
+<!-- ======================================================================= -->
+<aside class="absolute right-6 top-24 bottom-24 flex flex-col z-20 pointer-events-none" id="right-prompt-slab">
+  <div class="pointer-events-auto h-full flex flex-col p-4 rounded-[26px] glass-pod-panel relative overflow-hidden" id="right-slab-content">
+    <div class="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/35 to-transparent"></div>
+    <div class="pod-resizer pod-resizer-right" data-resize="right" title="Drag to resize · double-click to reset">
+      <div class="pod-resizer-rail"></div><div class="pod-resizer-pill"></div>
+    </div>
+
+    <!-- Slab header -->
+    <div class="flex items-center justify-between pb-3 border-b border-white/[0.08]">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <div class="w-7 h-7 rounded-lg bg-white/10 border border-white/20 text-zinc-100 flex items-center justify-center shadow-inner shrink-0">
+          <span class="material-symbols-outlined text-[15px]">terminal</span>
+        </div>
+        <div class="min-w-0">
+          <h2 class="font-mono text-xs font-semibold text-white tracking-wide uppercase">CAD PROMPT ENGINE</h2>
+          <p class="font-mono text-[8px] text-zinc-400 tracking-wider">SYNTHETIC TOPOLOGY LOOP</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <span class="font-mono text-[9px] text-emerald-300 font-semibold px-2 py-0.5 rounded-full bg-emerald-950/70 border border-emerald-500/30" id="pipeline-pill">PIPELINE READY</span>
+        <button class="w-6 h-6 rounded-full bg-white/[0.06] hover:bg-white/[0.15] border border-white/10 flex items-center justify-center text-zinc-400 hover:text-white tactile-btn" id="min-right-slab" title="Collapse panel (])">
+          <span class="material-symbols-outlined text-[14px]">remove</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Tab rail -->
+    <div class="flex items-center gap-1 p-0.5 rounded-full recessed-well mt-3">
+      <button class="right-tab-btn flex-1 py-1 px-1.5 rounded-full font-mono text-[9px] font-semibold bg-white/15 text-white border border-white/20 tactile-btn" data-tab="workbench">LOOP</button>
+      <button class="right-tab-btn flex-1 py-1 px-1.5 rounded-full font-mono text-[9px] font-medium text-zinc-400 hover:text-zinc-200 tactile-btn" data-tab="dsl">SOURCE</button>
+      <button class="right-tab-btn flex-1 py-1 px-1.5 rounded-full font-mono text-[9px] font-medium text-zinc-400 hover:text-zinc-200 tactile-btn" data-tab="report">REPORT</button>
+      <button class="right-tab-btn flex-1 py-1 px-1.5 rounded-full font-mono text-[9px] font-medium text-zinc-400 hover:text-zinc-200 tactile-btn" data-tab="diff">DIFF</button>
+      <button class="right-tab-btn flex-1 py-1 px-1.5 rounded-full font-mono text-[9px] font-medium text-zinc-400 hover:text-zinc-200 tactile-btn" data-tab="history">HIST</button>
+    </div>
+
+    <!-- TAB 1: WORKBENCH LOOP -->
+    <div class="right-tab-panel flex-1 flex flex-col min-h-0" data-panel="workbench">
+      <!-- Mode switcher -->
+      <div class="pt-3 pb-2 border-b border-white/[0.07] flex flex-col gap-2">
+        <div class="flex items-center justify-between">
+          <span class="font-mono text-[9px] uppercase tracking-wider text-zinc-400 font-semibold">OPERATION MODE ON <span class="text-zinc-200" id="mode-target-commit">—</span></span>
+          <label class="flex items-center gap-1.5 cursor-pointer font-mono text-[9px] text-zinc-400 hover:text-zinc-200" title="Branch automatically on every compile">
+            <input class="rounded bg-black/60 border-white/20 text-zinc-300 focus:ring-0 w-3 h-3" id="toggle-autofork" type="checkbox"/>
+            <span>AUTO-FORK</span>
+          </label>
+        </div>
+        <div class="grid grid-cols-3 gap-1 p-1 rounded-2xl recessed-well">
+          <button class="mode-switch-btn flex items-center justify-center gap-1 py-1.5 px-2 rounded-xl font-mono text-[9.5px] font-bold tactile-btn" data-mode="edit">
+            <span class="material-symbols-outlined text-[13px]">edit_note</span><span>EDIT</span>
+          </button>
+          <button class="mode-switch-btn flex items-center justify-center gap-1 py-1.5 px-2 rounded-xl font-mono text-[9.5px] font-semibold tactile-btn" data-mode="new_take">
+            <span class="material-symbols-outlined text-[13px]">auto_awesome</span><span>NEW TAKE</span>
+          </button>
+          <button class="mode-switch-btn flex items-center justify-center gap-1 py-1.5 px-2 rounded-xl font-mono text-[9.5px] font-semibold tactile-btn" data-mode="fix">
+            <span class="material-symbols-outlined text-[13px]">build</span><span>FIX ERR</span>
+          </button>
+        </div>
+        <div class="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-white/[0.03] border border-white/[0.06] font-mono text-[9px]">
+          <span class="text-zinc-300 truncate" id="mode-helper-text">—</span>
+          <div class="flex items-center gap-2 shrink-0 ml-2">
+            <label class="flex items-center gap-1 cursor-pointer text-zinc-400 hover:text-white" title="Attach the compiler report to the prompt">
+              <input checked="" class="rounded bg-black/60 border-white/20 text-zinc-300 focus:ring-0 w-3 h-3" id="ctx-include-report" type="checkbox"/><span>RPT</span>
+            </label>
+            <label class="flex items-center gap-1 cursor-pointer text-zinc-400 hover:text-white" title="Append the grammar reminder">
+              <input class="rounded bg-black/60 border-white/20 text-zinc-300 focus:ring-0 w-3 h-3" id="ctx-full-dsl" type="checkbox"/><span>SPEC</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex-1 overflow-y-auto space-y-3 py-3 pr-1 min-h-0" id="workbench-scroll">
+        <!-- Operator instruction bubble -->
+        <div class="p-3 bg-black/40 border border-white/[0.08] shadow-glass-well flex flex-col gap-1.5 rounded-2xl">
+          <div class="flex items-center justify-between">
+            <span class="font-mono text-[9px] font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-zinc-300"></span>OPERATOR INSTRUCTION
+            </span>
+            <span class="font-mono text-[8px] text-zinc-400 bg-white/[0.06] px-1.5 py-0.5 rounded" id="operator-scope">—</span>
+          </div>
+          <p class="font-mono text-xs text-zinc-200 leading-relaxed italic bg-white/[0.02] p-2.5 rounded-xl border border-white/[0.05]" id="operator-instruction">—</p>
+        </div>
+
+        <!-- Step 1: compiled prompt -->
+        <div class="p-3.5 glass-card-item rounded-2xl flex flex-col gap-2.5">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <div class="w-5 h-5 rounded-full bg-white/15 text-white font-mono text-[10px] font-bold flex items-center justify-center border border-white/20">1</div>
+              <span class="font-mono text-[11px] font-semibold text-white uppercase tracking-wide" id="step1-title">EDIT PROMPT COMPILED</span>
+            </div>
+            <span class="font-mono text-[9px] font-semibold px-2 py-0.5 rounded-full bg-white/[0.08] text-zinc-300 border border-white/10" id="prompt-token-badge">— TOK</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <button class="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-full bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 font-mono text-[10px] font-medium text-zinc-300 hover:text-white tactile-btn" id="toggle-dsl-btn">
+              <span class="material-symbols-outlined text-[13px] text-zinc-400">code</span>
+              <span id="dsl-toggle-label">PEEK PROMPT</span>
+            </button>
+            <button class="flex items-center justify-center gap-1.5 py-1.5 px-4 rounded-full bg-white/15 hover:bg-white/25 border border-white/20 text-white font-mono text-[10px] font-semibold shadow-sm tactile-btn" id="copy-dsl-btn">
+              <span class="material-symbols-outlined text-[13px]">content_copy</span><span>COPY</span>
+            </button>
+            <button class="flex items-center justify-center gap-1 py-1.5 px-3 rounded-full bg-white/[0.06] hover:bg-white/[0.14] border border-white/10 text-zinc-300 hover:text-white font-mono text-[10px] font-semibold tactile-btn" id="run-llm-btn" title="Send the prompt straight to your configured model">
+              <span class="material-symbols-outlined text-[13px]">bolt</span><span id="run-llm-label">RUN AI</span>
+            </button>
+          </div>
+          <pre class="hidden p-2.5 rounded-xl recessed-well font-mono text-[10px] leading-relaxed overflow-x-auto text-zinc-300 whitespace-pre-wrap max-h-48 overflow-y-auto" id="prompt-peek-well"></pre>
+        </div>
+
+        <!-- Live compiled source well, line-numbered and highlighted -->
+        <div class="p-3.5 glass-card-item rounded-2xl flex flex-col gap-2">
+          <div class="flex items-center justify-between">
+            <span class="font-mono text-[9px] font-semibold text-zinc-300 uppercase tracking-wider">COMPILED TOPOLOGY CONSTRAINTS</span>
+            <span class="font-mono text-[8px] text-zinc-500" id="well-kind-tag">—</span>
+          </div>
+          <div class="p-3 rounded-xl recessed-well font-mono text-[10.5px] leading-relaxed overflow-x-auto text-zinc-300 max-h-44 overflow-y-auto" id="dsl-well"></div>
+        </div>
+
+        <!-- Diagnostics puck grid -->
+        <div class="grid grid-cols-4 gap-1.5" id="diagnostics-grid">
+          <div class="p-2 glass-card-item rounded-xl text-center">
+            <div class="font-mono text-[8px] uppercase text-zinc-400 font-medium">BOUNDS</div>
+            <div class="font-mono text-[10px] font-semibold text-zinc-100" id="diag-bounds">—</div>
+          </div>
+          <div class="p-2 glass-card-item rounded-xl text-center">
+            <div class="font-mono text-[8px] uppercase text-zinc-400 font-medium">STRUCT</div>
+            <div class="font-mono text-[10px] font-semibold text-zinc-100" id="diag-struct">—</div>
+          </div>
+          <div class="p-2 glass-card-item rounded-xl text-center">
+            <div class="font-mono text-[8px] uppercase text-zinc-400 font-medium">TRACK</div>
+            <div class="font-mono text-[10px] font-semibold text-zinc-100" id="diag-track">—</div>
+          </div>
+          <div class="p-2 glass-card-item rounded-xl text-center">
+            <div class="font-mono text-[8px] uppercase text-zinc-400 font-medium">CHECK</div>
+            <div class="font-mono text-[10px] font-semibold text-emerald-400" id="diag-status">—</div>
+          </div>
+        </div>
+
+        <!-- Step 2: response cassette -->
+        <div class="p-3.5 glass-card-item rounded-2xl flex flex-col gap-2.5">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <div class="w-5 h-5 rounded-full bg-white/15 text-white font-mono text-[10px] font-bold flex items-center justify-center border border-white/20">2</div>
+              <span class="font-mono text-[11px] font-semibold text-white uppercase tracking-wide">RESPONSE CASSETTE</span>
+            </div>
+            <div class="flex items-center gap-1">
+              <button class="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-white/[0.08] hover:bg-white/[0.14] border border-white/10 font-mono text-[9px] font-medium text-zinc-300 tactile-btn" id="paste-clipboard-btn" title="Paste from clipboard">
+                <span class="material-symbols-outlined text-[12px] text-zinc-400">content_paste</span><span>PASTE</span>
+              </button>
+              <button class="flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-white/[0.08] hover:bg-white/[0.14] border border-white/10 font-mono text-[9px] font-medium text-zinc-300 tactile-btn" id="paste-sample-btn" title="Insert a valid sample revision">
+                <span>SAMPLE</span>
+              </button>
+            </div>
+          </div>
+          <textarea class="w-full p-2.5 rounded-xl recessed-well font-mono text-[10.5px] text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-white/30 resize-none h-20 transition-colors" id="ai-cassette-input" placeholder="// Paste the model's whole reply — the document is extracted automatically"></textarea>
+          <input class="w-full px-3 py-1.5 rounded-xl recessed-well font-mono text-[10px] text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-white/30" id="commit-note-input" placeholder="Revision note (e.g. wider shoulders + gold visor)" type="text"/>
+          <button class="w-full relative overflow-hidden flex items-center justify-center gap-2 py-2.5 rounded-full bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-semibold shadow-glow-white tactile-btn" id="compile-btn">
+            <span class="material-symbols-outlined text-[16px]">play_circle</span>
+            <span>COMPILE &amp; REGEN VOXEL</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Direct prompt injection bar -->
+      <div class="pt-2 border-t border-white/[0.08] flex flex-col gap-2">
+        <div class="flex items-center gap-1.5 overflow-x-auto pb-0.5" id="quick-chips-row"></div>
+        <div class="flex items-center gap-2">
+          <input class="flex-1 px-3.5 py-1.5 rounded-full recessed-well font-mono text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-white/30 transition-colors" id="prompt-input" placeholder="Prompt modification..." type="text"/>
+          <button class="px-3.5 py-1.5 rounded-full bg-white/15 hover:bg-white/25 border border-white/20 text-white font-mono text-xs font-semibold tactile-btn" id="build-prompt-btn">GEN</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: SOURCE EDITOR -->
+    <div class="right-tab-panel hidden flex-1 flex-col min-h-0 pt-3 gap-2.5" data-panel="dsl">
+      <div class="flex items-center justify-between">
+        <span class="font-mono text-[10px] text-zinc-400 uppercase" id="dsl-tab-header">SOURCE</span>
+        <div class="flex items-center gap-1.5">
+          <button class="px-2.5 py-1 rounded-full bg-white/[0.07] hover:bg-white/[0.15] border border-white/10 font-mono text-[9.5px] text-zinc-200 tactile-btn" id="copy-raw-dsl-btn">COPY</button>
+          <button class="px-2.5 py-1 rounded-full bg-white/15 hover:bg-white/25 border border-white/20 font-mono text-[9.5px] font-semibold text-white tactile-btn" id="recompile-direct-dsl-btn">COMMIT EDIT</button>
+        </div>
+      </div>
+      <textarea class="flex-1 w-full p-3 rounded-2xl recessed-well font-mono text-[10.5px] leading-relaxed text-zinc-200 focus:outline-none focus:border-white/30 resize-none" id="direct-dsl-editor" spellcheck="false"></textarea>
+    </div>
+
+    <!-- TAB 3: COMPILER REPORT -->
+    <div class="right-tab-panel hidden flex-1 flex-col min-h-0 pt-3 gap-2.5" data-panel="report">
+      <div class="flex-1 overflow-y-auto p-3 rounded-2xl recessed-well font-mono text-[10.5px] leading-relaxed text-zinc-300" id="compiler-report-slot"></div>
+      <button class="w-full py-2 rounded-full bg-white/[0.08] hover:bg-white/[0.16] border border-white/15 font-mono text-[10px] font-semibold text-zinc-200 hover:text-white tactile-btn" id="send-report-to-fix-btn">
+        SWITCH TO FIX MODE WITH THIS REPORT
+      </button>
+    </div>
+
+    <!-- TAB 4: DIFF -->
+    <div class="right-tab-panel hidden flex-1 flex-col min-h-0 pt-3 gap-2.5" data-panel="diff">
+      <div class="flex items-center gap-2 font-mono text-[10px]">
+        <select class="flex-1 px-2.5 py-1.5 rounded-xl recessed-well text-zinc-200 border border-white/10 focus:outline-none text-[10px]" id="diff-base-select"></select>
+        <span class="material-symbols-outlined text-[14px] text-zinc-500">arrow_forward</span>
+        <select class="flex-1 px-2.5 py-1.5 rounded-xl recessed-well text-zinc-200 border border-white/10 focus:outline-none text-[10px]" id="diff-head-select"></select>
+      </div>
+      <div class="flex-1 overflow-y-auto p-3 rounded-2xl recessed-well font-mono text-[10px] leading-relaxed space-y-0.5" id="diff-output-slot"></div>
+    </div>
+
+    <!-- TAB 5: PROMPT HISTORY -->
+    <div class="right-tab-panel hidden flex-1 flex-col min-h-0 pt-3 gap-2" data-panel="history">
+      <div class="flex items-center justify-between">
+        <span class="font-mono text-[10px] text-zinc-400 uppercase" id="history-tab-header">SAVED PROMPT LOG</span>
+        <span class="font-mono text-[9px] text-zinc-500" id="history-count-pill">0 ENTRIES</span>
+      </div>
+      <div class="flex-1 overflow-y-auto space-y-2 pr-0.5 min-h-0" id="chat-history-slot"></div>
+    </div>
+  </div>
+
+  <div class="pointer-events-auto hidden items-center justify-between p-2 px-3.5 rounded-full glass-pod-panel cursor-pointer tactile-btn text-zinc-300 hover:text-white self-end mt-1" id="right-slab-collapsed">
+    <div class="flex items-center gap-2">
+      <span class="material-symbols-outlined text-[16px] text-zinc-300">terminal</span>
+      <span class="font-mono text-[10px] font-semibold">CAD ENGINE</span>
+      <span class="font-mono text-[8px] bg-emerald-950/80 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded">READY</span>
+    </div>
+    <span class="material-symbols-outlined text-[14px] text-zinc-400 ml-2">unfold_more</span>
+  </div>
+</aside>
+
+<!-- ======================================================================= -->
+<!-- 5. FLOATING HUD TELEMETRY CAPSULE                                        -->
+<!-- ======================================================================= -->
+<div class="absolute top-24 left-1/2 -translate-x-1/2 z-10 pointer-events-none flex items-center gap-3 glass-pod-panel px-4 py-1.5 rounded-full font-mono text-[10px] text-zinc-300">
+  <div class="flex items-center gap-1.5">
+    <span class="text-zinc-400">ROT_X:</span><span class="text-white font-semibold" id="hud-rot-x">0.0°</span>
+  </div>
+  <div class="w-[1px] h-3 bg-white/20"></div>
+  <div class="flex items-center gap-1.5">
+    <span class="text-zinc-400">ROT_Y:</span><span class="text-white font-semibold" id="hud-rot-y">0.0°</span>
+  </div>
+  <div class="w-[1px] h-3 bg-white/20"></div>
+  <div class="flex items-center gap-1.5">
+    <span class="relative flex h-1.5 w-1.5">
+      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+      <span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400"></span>
+    </span>
+    <span class="text-zinc-400">FPS:</span><span class="text-emerald-400 font-semibold" id="hud-fps">60.0</span>
+  </div>
+  <div class="w-[1px] h-3 bg-white/20"></div>
+  <div class="flex items-center gap-1.5">
+    <span class="text-zinc-400">LOD:</span><span class="text-zinc-200 font-semibold">0 // SUB_D</span>
+  </div>
+  <div class="w-[1px] h-3 bg-white/20"></div>
+  <div class="flex items-center gap-1.5">
+    <span class="text-zinc-400">HEAD:</span><span class="text-zinc-200 font-semibold" id="hud-head-tag">—</span>
+  </div>
+</div>
+
+<!-- ======================================================================= -->
+<!-- 6. 2D ORTHOGRAPHIC BLUEPRINT PROJECTIONS                                 -->
+<!-- ======================================================================= -->
+<div class="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 pointer-events-auto" id="ortho-blueprint-container">
+  <div class="glass-pod-panel p-3.5 rounded-[22px] flex flex-col gap-2.5 shadow-2xl relative" id="ortho-blueprint-content">
+    <div class="flex items-center justify-between px-1">
+      <div class="flex items-center gap-2">
+        <span class="material-symbols-outlined text-[14px] text-zinc-400">architecture</span>
+        <span class="font-mono text-[10px] font-semibold text-zinc-200 tracking-wider uppercase">2D ORTHOGRAPHIC BLUEPRINT PROJECTIONS</span>
+        <span class="font-mono text-[8px] bg-white/10 text-zinc-300 border border-white/15 px-2 py-0.5 rounded-full">CAD SCALE 1:1</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="font-mono text-[9px] text-zinc-400">TOLERANCE ±0.02mm</span>
+        <button class="w-5 h-5 rounded-full bg-white/[0.08] hover:bg-white/[0.15] text-zinc-400 hover:text-white flex items-center justify-center tactile-btn" id="min-ortho-btn" title="Minimize blueprint strip">
+          <span class="material-symbols-outlined text-[13px]">remove</span>
+        </button>
+      </div>
+    </div>
+    <div class="flex items-center gap-3" id="ortho-svg-strip"></div>
+  </div>
+  <div class="hidden items-center gap-2.5 px-4 py-1.5 rounded-full glass-pod-panel cursor-pointer tactile-btn shadow-lg" id="ortho-blueprint-collapsed">
+    <span class="material-symbols-outlined text-[15px] text-zinc-300">square_foot</span>
+    <span class="font-mono text-[10px] font-semibold text-zinc-200">2D ORTHO VIEWS (FRONT / SIDE / TOP)</span>
+    <span class="material-symbols-outlined text-[14px] text-zinc-400">unfold_more</span>
+  </div>
+</div>
+
+<!-- ======================================================================= -->
+<!-- 7. BOTTOM HARDWARE DOCK                                                  -->
+<!-- ======================================================================= -->
+<footer class="absolute bottom-5 inset-x-0 flex items-center justify-center px-7 z-30 pointer-events-none" id="bottom-dock-container">
+  <div class="pointer-events-auto flex items-center gap-4 glass-pod-panel px-4 py-2 rounded-full max-w-5xl w-full justify-between relative overflow-hidden" id="bottom-dock-content">
+    <div class="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/35 to-transparent"></div>
+
+    <!-- Machined camera view discs -->
+    <div class="flex items-center gap-1 bg-black/50 p-1 rounded-full border border-white/[0.08] shadow-glass-well">
+      <button class="cam-btn px-3 py-1 rounded-full font-mono text-[10px] font-semibold tactile-btn" data-cam="iso">ISO</button>
+      <button class="cam-btn px-3 py-1 rounded-full font-mono text-[10px] font-medium tactile-btn" data-cam="front">FRONT</button>
+      <button class="cam-btn px-3 py-1 rounded-full font-mono text-[10px] font-medium tactile-btn" data-cam="side">SIDE</button>
+      <button class="cam-btn px-3 py-1 rounded-full font-mono text-[10px] font-medium tactile-btn" data-cam="top">TOP</button>
+      <div class="w-[1px] h-3.5 bg-white/15 mx-0.5"></div>
+      <button class="w-7 h-7 rounded-full bg-white/[0.06] hover:bg-white/[0.14] border border-white/10 flex items-center justify-center text-zinc-400 hover:text-white tactile-btn" id="cam-wireframe" title="Toggle wireframe (W)">
+        <span class="material-symbols-outlined text-[15px]">grid_4x4</span>
+      </button>
+      <button class="w-7 h-7 rounded-full bg-white/[0.06] hover:bg-white/[0.14] border border-white/10 flex items-center justify-center text-zinc-400 hover:text-white tactile-btn" id="cam-autorotate" title="Auto rotate (R)">
+        <span class="material-symbols-outlined text-[15px]">360</span>
+      </button>
+    </div>
+
+    <!-- Rotary scrubber & playback -->
+    <div class="flex items-center gap-3 flex-1 max-w-sm mx-2" id="dock-anim-cluster">
+      <button class="w-8 h-8 rounded-full bg-white/15 hover:bg-white/25 active:bg-white/30 border border-white/20 flex items-center justify-center text-white shadow-sm tactile-btn shrink-0" id="play-pause-btn" title="Play / pause (Space)">
+        <span class="material-symbols-outlined text-[17px]">pause</span>
+      </button>
+      <div class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-black/50 border border-white/[0.08] font-mono text-[10px] font-medium text-zinc-300 shadow-glass-well shrink-0">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+        <span id="anim-name-label">static</span>
+      </div>
+      <div class="flex-1 flex items-center gap-2">
+        <span class="font-mono text-[10px] font-medium text-zinc-300 shrink-0 w-10" id="scrubber-time">0.00s</span>
+        <div class="flex-1 h-2 rounded-full bg-black/60 border border-white/[0.08] shadow-glass-well relative flex items-center cursor-pointer group" id="timeline-scrubber">
+          <div class="h-full bg-gradient-to-r from-zinc-300 to-white rounded-full shadow-[0_0_8px_rgba(255,255,255,0.4)]" id="scrubber-fill" style="width:0%"></div>
+          <div class="w-3.5 h-3.5 rounded-full bg-white border border-zinc-400 shadow-md -ml-1.5 transition-transform group-hover:scale-125" id="scrubber-knob"></div>
+        </div>
+        <span class="font-mono text-[10px] text-zinc-500 shrink-0" id="scrubber-total">0.50s</span>
+      </div>
+    </div>
+
+    <!-- Machined export keys -->
+    <div class="flex items-center gap-2">
+      <div class="flex items-center gap-1 bg-black/50 p-1 rounded-full border border-white/[0.08] shadow-glass-well" id="export-key-row">
+        <button class="export-btn flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/[0.06] hover:bg-white/[0.14] border border-white/10 text-zinc-300 hover:text-white font-mono text-[10px] font-medium tactile-btn" data-format="glb" title="Export binary glTF">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span><span>GLB</span>
+        </button>
+        <button class="export-btn flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/[0.06] hover:bg-white/[0.14] border border-white/10 text-zinc-300 hover:text-white font-mono text-[10px] font-medium tactile-btn" data-format="obj" title="Export Wavefront OBJ">
+          <span class="w-1.5 h-1.5 rounded-full bg-zinc-300"></span><span>OBJ</span>
+        </button>
+        <button class="export-btn flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/[0.06] hover:bg-white/[0.14] border border-white/10 text-zinc-300 hover:text-white font-mono text-[10px] font-medium tactile-btn" data-format="json" title="Export engine-native JSON">
+          <span class="w-1.5 h-1.5 rounded-full bg-zinc-400"></span><span>JSON</span>
+        </button>
+      </div>
+      <button class="export-btn flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-semibold shadow-glow-white tactile-btn" data-format="zip" title="Download the full revision bundle">
+        <span class="material-symbols-outlined text-[15px]">archive</span><span>ZIP</span>
+      </button>
+      <button class="export-btn w-7 h-7 rounded-full bg-white/[0.08] hover:bg-white/[0.16] border border-white/15 flex items-center justify-center text-zinc-400 hover:text-white tactile-btn" data-format="repo" title="Download the whole project repository">
+        <span class="material-symbols-outlined text-[14px]">folder_zip</span>
+      </button>
+      <button class="w-7 h-7 rounded-full bg-white/[0.08] hover:bg-white/[0.16] border border-white/15 flex items-center justify-center text-zinc-400 hover:text-white tactile-btn" id="min-bottom-dock" title="Collapse dock">
+        <span class="material-symbols-outlined text-[14px]">expand_more</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="pointer-events-auto hidden items-center gap-3 px-4 py-1.5 rounded-full glass-pod-panel cursor-pointer tactile-btn shadow-lg" id="bottom-dock-collapsed">
+    <div class="flex items-center gap-2">
+      <span class="material-symbols-outlined text-[15px] text-zinc-300">videocam</span>
+      <span class="font-mono text-[10px] font-semibold text-zinc-200">CAMERA &amp; TIMELINE</span>
+    </div>
+    <div class="w-[1px] h-3 bg-white/20"></div>
+    <span class="font-mono text-[9px] text-emerald-400 font-semibold" id="dock-collapsed-status">READY</span>
+    <span class="material-symbols-outlined text-[14px] text-zinc-400">expand_less</span>
+  </div>
+</footer>
+
+<!-- ======================================================================= -->
+<!-- 8. MODAL: VISUAL COMMIT & BRANCH MAP                                     -->
+<!-- ======================================================================= -->
+<div class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 backdrop-blur-md p-6" id="branch-map-modal">
+  <div class="glass-pod-panel w-full max-w-5xl h-[80vh] rounded-[28px] flex flex-col overflow-hidden animate-modal-in relative">
+    <div class="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/40 to-transparent"></div>
+    <div class="flex items-center justify-between px-6 py-4 border-b border-white/[0.08]">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-zinc-100">
+          <span class="material-symbols-outlined text-[18px]">hub</span>
+        </div>
+        <div>
+          <h2 class="font-mono text-sm font-bold text-white tracking-wide flex items-center gap-2">
+            VISUAL DESIGN BRANCH MAP
+            <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-white/[0.08] text-zinc-300 border border-white/10" id="dag-project-badge">—</span>
+          </h2>
+          <p class="font-mono text-[10px] text-zinc-400">Click a revision to inspect · double-click to check it out to the 3D stage</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button class="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 hover:bg-white/25 border border-white/20 font-mono text-[10px] font-bold text-white tactile-btn" id="dag-new-branch-btn">
+          <span class="material-symbols-outlined text-[14px]">call_split</span><span>FORK FROM SELECTED</span>
+        </button>
+        <button class="w-8 h-8 rounded-full bg-white/[0.07] hover:bg-white/[0.15] border border-white/10 flex items-center justify-center text-zinc-400 hover:text-white tactile-btn" id="close-branch-map-btn">
+          <span class="material-symbols-outlined text-[16px]">close</span>
+        </button>
+      </div>
+    </div>
+    <div class="flex-1 flex min-h-0">
+      <div class="flex-1 relative overflow-auto cad-technical-workbench p-6" id="dag-canvas-wrap">
+        <svg class="w-full h-full min-h-[420px]" id="dag-svg"></svg>
+      </div>
+      <div class="w-80 border-l border-white/[0.08] bg-black/40 p-5 flex flex-col gap-3 overflow-y-auto" id="dag-inspector">
+        <div class="flex items-center justify-between">
+          <span class="font-mono text-[10px] text-zinc-400 uppercase tracking-wider">SELECTED REVISION</span>
+          <span class="font-mono text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-500/40" id="dag-insp-status">—</span>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="font-mono text-base font-bold text-white" id="dag-insp-id">—</span>
+            <span class="font-mono text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-zinc-300 border border-white/20" id="dag-insp-branch">—</span>
+          </div>
+          <p class="font-mono text-xs text-zinc-200 mt-1.5" id="dag-insp-note"></p>
+          <p class="font-mono text-[10px] text-zinc-500 mt-1" id="dag-insp-meta"></p>
+        </div>
+        <div class="hidden rounded-xl overflow-hidden border border-white/10 bg-black/60" id="dag-insp-thumb-wrap">
+          <img class="w-full h-28 object-cover" id="dag-insp-thumb" alt="Revision thumbnail"/>
+        </div>
+        <pre class="p-3 rounded-xl recessed-well font-mono text-[9.5px] text-zinc-300 overflow-x-auto max-h-44 overflow-y-auto whitespace-pre-wrap" id="dag-insp-dsl"></pre>
+        <div class="mt-auto flex flex-col gap-2 pt-3 border-t border-white/[0.08]">
+          <button class="w-full py-2 rounded-full bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-[10.5px] font-bold tactile-btn flex items-center justify-center gap-1.5" id="dag-checkout-btn">
+            <span class="material-symbols-outlined text-[15px]">deployed_code</span><span>CHECKOUT TO 3D STAGE</span>
+          </button>
+          <div class="grid grid-cols-2 gap-2">
+            <button class="py-1.5 rounded-full bg-white/[0.08] hover:bg-white/[0.16] border border-white/15 text-zinc-200 font-mono text-[10px] font-semibold tactile-btn" id="dag-edit-from-btn">EDIT FROM HERE</button>
+            <button class="py-1.5 rounded-full bg-white/[0.08] hover:bg-white/[0.16] border border-white/15 text-zinc-200 font-mono text-[10px] font-semibold tactile-btn" id="dag-diff-btn">DIFF VS HEAD</button>
+          </div>
+          <button class="w-full py-1.5 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/35 text-emerald-300 font-mono text-[10px] font-semibold tactile-btn hidden" id="dag-merge-btn">
+            MERGE BRANCH INTO MAIN
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================================================================= -->
+<!-- 9. MODAL: NEW ASSET                                                      -->
+<!-- ======================================================================= -->
+<div class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 backdrop-blur-md p-6" id="new-design-modal">
+  <div class="glass-pod-panel w-full max-w-xl rounded-[28px] p-6 flex flex-col gap-4 animate-modal-in relative">
+    <div class="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/40 to-transparent"></div>
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-zinc-100">
+          <span class="material-symbols-outlined text-[18px]">add_box</span>
+        </div>
+        <div>
+          <h2 class="font-mono text-sm font-bold text-white">START NEW ASSET</h2>
+          <p class="font-mono text-[10px] text-zinc-400">Creates a persistent repository with a <span class="text-zinc-300">main</span> branch and a compiling starter document</p>
+        </div>
+      </div>
+      <button class="w-7 h-7 rounded-full bg-white/[0.07] hover:bg-white/[0.15] text-zinc-400 hover:text-white flex items-center justify-center tactile-btn" id="close-new-design-btn">
+        <span class="material-symbols-outlined text-[15px]">close</span>
+      </button>
+    </div>
+    <div class="grid grid-cols-3 gap-2.5">
+      <button class="new-track-card p-3 rounded-2xl glass-card-item text-left flex flex-col gap-1.5" data-track="model">
+        <span class="material-symbols-outlined text-[20px] text-zinc-200">view_in_ar</span>
+        <span class="font-mono text-xs font-bold text-white">VOXEL MODEL</span>
+        <span class="font-mono text-[9px] text-zinc-400">Bones, boxes &amp; keyframe animation</span>
+      </button>
+      <button class="new-track-card p-3 rounded-2xl glass-card-item text-left flex flex-col gap-1.5" data-track="prop">
+        <span class="material-symbols-outlined text-[20px] text-zinc-200">precision_manufacturing</span>
+        <span class="font-mono text-xs font-bold text-white">CAD PROP</span>
+        <span class="font-mono text-[9px] text-zinc-400">Watertight revolves, extrudes &amp; lofts</span>
+      </button>
+      <button class="new-track-card p-3 rounded-2xl glass-card-item text-left flex flex-col gap-1.5" data-track="texture">
+        <span class="material-symbols-outlined text-[20px] text-zinc-200">texture</span>
+        <span class="font-mono text-xs font-bold text-white">PBR TEXTURE</span>
+        <span class="font-mono text-[9px] text-zinc-400">Layered procedural pixel maps</span>
+      </button>
+    </div>
+    <div class="space-y-3">
+      <div>
+        <label class="font-mono text-[10px] text-zinc-400 uppercase block mb-1">Asset identifier</label>
+        <input class="w-full px-3.5 py-2 rounded-xl recessed-well font-mono text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-white/30" id="new-design-name" placeholder="e.g. sentinel_drone" type="text"/>
+      </div>
+      <div>
+        <label class="font-mono text-[10px] text-zinc-400 uppercase block mb-1">Initial concept brief</label>
+        <textarea class="w-full px-3.5 py-2.5 rounded-xl recessed-well font-mono text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-white/30 h-20 resize-none" id="new-design-prompt" placeholder="Describe silhouette, proportions, materials, or animation..."></textarea>
+      </div>
+    </div>
+    <div class="flex items-center justify-end gap-2 pt-2 border-t border-white/[0.08]">
+      <button class="px-4 py-2 rounded-full bg-white/[0.07] hover:bg-white/[0.15] font-mono text-xs text-zinc-300 tactile-btn" id="cancel-new-design-btn">CANCEL</button>
+      <button class="px-5 py-2 rounded-full bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-bold shadow-glow-white tactile-btn" id="confirm-new-design-btn">CREATE &amp; COMPILE PROMPT</button>
+    </div>
+  </div>
+</div>
+
+<!-- ======================================================================= -->
+<!-- 10. MODAL: COMMAND PALETTE                                               -->
+<!-- ======================================================================= -->
+<div class="fixed inset-0 z-50 hidden items-start justify-center pt-[14vh] bg-black/65 backdrop-blur-sm p-4" id="cmd-palette-modal">
+  <div class="glass-pod-panel w-full max-w-lg rounded-[22px] overflow-hidden animate-modal-in">
+    <div class="flex items-center gap-2.5 px-4 py-3 border-b border-white/[0.08]">
+      <span class="material-symbols-outlined text-[18px] text-zinc-300">search</span>
+      <input class="flex-1 bg-transparent border-0 focus:ring-0 font-mono text-xs text-white placeholder-zinc-500 p-0" id="cmd-palette-input" placeholder="Type a command, asset, or branch..." type="text"/>
+      <kbd class="px-1.5 py-0.5 rounded bg-white/10 font-mono text-[9px] text-zinc-400">ESC</kbd>
+    </div>
+    <div class="max-h-72 overflow-y-auto p-2 space-y-1" id="cmd-palette-list"></div>
+  </div>
+</div>
+
+<!-- ======================================================================= -->
+<!-- 11. MODAL: STUDIO ENGINE & LLM RELAY SETTINGS                            -->
+<!-- ======================================================================= -->
+<div class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 backdrop-blur-md p-6" id="settings-modal">
+  <div class="glass-pod-panel w-full max-w-xl rounded-[28px] p-6 flex flex-col gap-4 animate-modal-in relative">
+    <div class="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-white/40 to-transparent"></div>
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-zinc-100">
+          <span class="material-symbols-outlined text-[18px]">tune</span>
+        </div>
+        <div>
+          <h2 class="font-mono text-sm font-bold text-white">STUDIO ENGINE &amp; LLM RELAY</h2>
+          <p class="font-mono text-[10px] text-zinc-400">Persisted to the local SQLite store by studio_server.py</p>
+        </div>
+      </div>
+      <button class="w-7 h-7 rounded-full bg-white/[0.07] hover:bg-white/[0.15] text-zinc-400 hover:text-white flex items-center justify-center tactile-btn" id="close-settings-btn">
+        <span class="material-symbols-outlined text-[15px]">close</span>
+      </button>
+    </div>
+
+    <div class="p-3 rounded-2xl recessed-well font-mono text-[10px] space-y-1">
+      <div class="flex items-center justify-between">
+        <span class="text-zinc-400">ENGINE STATUS</span>
+        <span class="font-bold text-emerald-300" id="settings-engine-label">CONNECTING…</span>
+      </div>
+      <div class="flex items-center justify-between gap-3">
+        <span class="text-zinc-400 shrink-0">SQLITE DB</span><span class="text-zinc-300 truncate" id="settings-db-path">—</span>
+      </div>
+      <div class="flex items-center justify-between gap-3">
+        <span class="text-zinc-400 shrink-0">WORKSPACE</span><span class="text-zinc-300 truncate" id="settings-workspace-dir">—</span>
+      </div>
+    </div>
+
+    <div class="space-y-3">
+      <div class="flex items-center justify-between">
+        <label class="flex items-center gap-2 cursor-pointer font-mono text-xs text-zinc-200 font-semibold">
+          <input class="rounded bg-black/60 border-white/20 text-zinc-300 focus:ring-0 w-3.5 h-3.5" id="set-llm-enabled" type="checkbox"/>
+          <span>Enable direct LLM relay</span>
+        </label>
+        <label class="flex items-center gap-1.5 cursor-pointer font-mono text-[10px] text-zinc-300">
+          <input class="rounded bg-black/60 border-white/20 text-zinc-300 focus:ring-0 w-3.5 h-3.5" id="set-llm-autocompile" type="checkbox"/>
+          <span>AUTO-COMPILE</span>
+        </label>
+      </div>
+      <div class="grid grid-cols-2 gap-2.5">
+        <div>
+          <label class="font-mono text-[9.5px] text-zinc-400 uppercase block mb-1">Provider format</label>
+          <select class="w-full px-3 py-2 rounded-xl recessed-well font-mono text-xs text-white border border-white/10 focus:outline-none focus:border-white/30" id="set-llm-provider">
+            <option value="ollama">Ollama (local)</option>
+            <option value="openai">OpenAI-compatible</option>
+            <option value="gemini">Google Gemini</option>
+          </select>
+        </div>
+        <div>
+          <label class="font-mono text-[9.5px] text-zinc-400 uppercase block mb-1">Model name</label>
+          <input class="w-full px-3 py-2 rounded-xl recessed-well font-mono text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-white/30" id="set-llm-model" placeholder="qwen2.5-coder:7b" type="text"/>
+        </div>
+      </div>
+      <div>
+        <label class="font-mono text-[9.5px] text-zinc-400 uppercase block mb-1">Endpoint URL</label>
+        <input class="w-full px-3 py-2 rounded-xl recessed-well font-mono text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-white/30" id="set-llm-endpoint" placeholder="http://127.0.0.1:11434/v1/chat/completions" type="text"/>
+      </div>
+      <div>
+        <label class="font-mono text-[9.5px] text-zinc-400 uppercase block mb-1">API key (optional for local Ollama)</label>
+        <input class="w-full px-3 py-2 rounded-xl recessed-well font-mono text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-white/30" id="set-llm-apikey" placeholder="sk-… or AIza…" type="password"/>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between pt-2 border-t border-white/[0.08]">
+      <button class="px-3.5 py-1.5 rounded-full bg-white/[0.06] hover:bg-white/[0.14] border border-white/10 font-mono text-[10px] text-zinc-300 tactile-btn" id="settings-refresh-btn">SYNC FROM SERVER</button>
+      <div class="flex items-center gap-2">
+        <button class="px-4 py-2 rounded-full bg-white/[0.07] hover:bg-white/[0.15] font-mono text-xs text-zinc-300 tactile-btn" id="cancel-settings-btn">CANCEL</button>
+        <button class="px-5 py-2 rounded-full bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-bold shadow-glow-white tactile-btn" id="save-settings-btn">SAVE SETTINGS</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast stack -->
+<div class="fixed bottom-24 right-7 z-50 flex flex-col gap-2 pointer-events-none" id="toast-stack"></div>
+
+<script>
+(() => {
+  'use strict';
+
+  /* =====================================================================
+   * A. LIVE BACKEND ADAPTER
+   * studio_server.py owns the truth: it runs the real designbridge
+   * compiler, stores revisions in SQLite and writes real exports. The UI
+   * holds no geometry of its own.
+   * ===================================================================== */
+  const API = {
+    LIVE: false,
+    BASE: window.location.protocol.startsWith('http') ? '' : 'http://127.0.0.1:8765',
+    engine: 'OFFLINE',
+    dbPath: '',
+    workspaceDir: '',
+  };
+
+  async function apiCall(path, options = {}, force = false) {
+    if (!API.LIVE && !force) return null;
+    const res = await fetch(API.BASE + path, {
+      headers: { 'Content-Type': 'application/json' },
+      ...options,
+    });
+    const text = await res.text();
+    let data = {};
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text }; }
+    if (!res.ok || data.ok === false) throw new Error(data.error || `API ${res.status}`);
+    return data;
+  }
+
+  let settingsTimer = null;
+  let pendingPatch = {};
+  function syncSettings(patch, immediate = false) {
+    Object.assign(state.settings, patch);
+    if (!API.LIVE) return;
+    Object.assign(pendingPatch, patch);
+    if (settingsTimer) clearTimeout(settingsTimer);
+    const flush = async () => {
+      const payload = { ...pendingPatch };
+      pendingPatch = {};
+      if (!Object.keys(payload).length) return;
+      try {
+        const r = await apiCall('/api/settings', { method: 'PUT', body: JSON.stringify(payload) });
+        if (r && r.settings) Object.assign(state.settings, r.settings);
+      } catch (err) { console.warn('settings sync failed:', err.message); }
+    };
+    if (immediate) flush(); else settingsTimer = setTimeout(flush, 260);
+  }
+
+  function updateEngineBadge() {
+    const pill = document.getElementById('engine-status-pill');
+    const lbl = document.getElementById('settings-engine-label');
+    const dbEl = document.getElementById('settings-db-path');
+    const wsEl = document.getElementById('settings-workspace-dir');
+    if (API.LIVE) {
+      const core = API.engine === 'DESIGNBRIDGE_CORE';
+      pill.textContent = core ? 'CORE · LIVE' : 'SQLITE · LIVE';
+      pill.className = 'font-mono text-[8.5px] font-semibold px-2 py-0.5 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-500/35 cursor-pointer hover:text-white transition-colors';
+      if (lbl) {
+        lbl.textContent = core ? 'DESIGNBRIDGE CORE (CONNECTED)' : 'SQLITE ONLY — designbridge.py not found';
+        lbl.className = core ? 'font-bold text-emerald-300' : 'font-bold text-amber-300';
+      }
+    } else {
+      pill.textContent = 'NO SERVER';
+      pill.className = 'font-mono text-[8.5px] font-semibold px-2 py-0.5 rounded-full bg-red-950/60 text-red-300 border border-red-500/35 cursor-pointer hover:text-white transition-colors';
+      if (lbl) { lbl.textContent = 'NOT CONNECTED — start studio_server.py'; lbl.className = 'font-bold text-red-300'; }
+    }
+    if (dbEl) dbEl.textContent = API.dbPath || '—';
+    if (wsEl) wsEl.textContent = API.workspaceDir || '—';
+  }
+
+  /* =====================================================================
+   * B. APPLICATION STATE
+   * ===================================================================== */
+  const state = {
+    activeProjectId: null,
+    activeMode: 'edit',
+    activeRightTab: 'workbench',
+    branchFilter: 'ALL',
+    selectedDagCommitId: null,
+    newDesignTrack: 'model',
+    lastInstruction: '',
+    promptText: '',
+    mesh: null,
+    settings: {
+      leftWidth: 300, rightWidth: 430,
+      leftCollapsed: false, rightCollapsed: false,
+      orthoCollapsed: false, dockCollapsed: false,
+      activeProjectId: null, activeMode: 'edit', activeRightTab: 'workbench',
+      autoFork: false, includeReport: true, fullDslSpec: false,
+      wireframe: false, autoRotate: false, cameraPreset: 'iso',
+      llmEnabled: false, llmProvider: 'ollama',
+      llmEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
+      llmModel: 'qwen2.5-coder:7b', llmApiKey: '', llmAutoCompile: true,
+    },
+    projects: {},
+  };
+
+  const hasProjects = () => Object.keys(state.projects).length > 0;
+
+  function getActiveProject() {
+    if (state.projects[state.activeProjectId]) return state.projects[state.activeProjectId];
+    const first = Object.keys(state.projects)[0];
+    state.activeProjectId = first || null;
+    return first ? state.projects[first] : null;
+  }
+  function getActiveCommit() {
+    const p = getActiveProject();
+    if (!p || !p.commits || !p.commits.length) return null;
+    return p.commits.find(c => c.id === p.headCommitId) || p.commits[p.commits.length - 1];
+  }
+
+  function applyBootstrapState(boot, applyLayout = false) {
+    if (!boot || !boot.projects) return;
+    API.LIVE = true;
+    API.engine = boot.engine || 'SQLITE_DISK_ENGINE';
+    API.dbPath = boot.dbPath || '';
+    API.workspaceDir = boot.workspaceDir || '';
+    state.projects = boot.projects;
+    if (boot.settings) Object.assign(state.settings, boot.settings);
+
+    const s = state.settings;
+    if (s.activeProjectId && state.projects[s.activeProjectId]) state.activeProjectId = s.activeProjectId;
+    else if (!state.projects[state.activeProjectId]) state.activeProjectId = Object.keys(state.projects)[0] || null;
+    if (s.activeMode) state.activeMode = s.activeMode;
+
+    if (applyLayout) {
+      if (typeof s.leftWidth === 'number') {
+        pods.panes.left.lastOpen = s.leftWidth;
+        pods.panes.left.current = pods.panes.left.target = s.leftWidth;
+      }
+      if (typeof s.rightWidth === 'number') {
+        pods.panes.right.lastOpen = s.rightWidth;
+        pods.panes.right.current = pods.panes.right.target = s.rightWidth;
+      }
+      pods.setCollapsed('left', !!s.leftCollapsed, true);
+      pods.setCollapsed('right', !!s.rightCollapsed, true);
+      pods._apply();
+      setOrthoCollapsed(!!s.orthoCollapsed, true);
+      setDockCollapsed(!!s.dockCollapsed, true);
+      document.getElementById('toggle-autofork').checked = !!s.autoFork;
+      document.getElementById('ctx-include-report').checked = s.includeReport !== false;
+      document.getElementById('ctx-full-dsl').checked = !!s.fullDslSpec;
+      wireframe = !!s.wireframe;
+      markToggle('cam-wireframe', wireframe);
+      autoRotate = !!s.autoRotate;
+      markToggle('cam-autorotate', autoRotate);
+      if (s.cameraPreset) setCameraPreset(s.cameraPreset, true);
+      if (s.activeRightTab) switchRightTab(s.activeRightTab, true);
+    }
+    updateEngineBadge();
+  }
+
+  /* =====================================================================
+   * C. TOASTS
+   * ===================================================================== */
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function toast(title, detail = '', tone = 'neutral') {
+    const stack = document.getElementById('toast-stack');
+    const tones = {
+      neutral: 'border-white/20 text-zinc-100',
+      ok: 'border-emerald-400/40 text-emerald-300',
+      warn: 'border-amber-400/40 text-amber-300',
+      err: 'border-red-400/45 text-red-300',
+    };
+    const el = document.createElement('div');
+    el.className = `pointer-events-auto glass-pod-panel px-3.5 py-2.5 rounded-2xl border ${tones[tone] || tones.neutral} font-mono text-[10px] flex flex-col gap-0.5 max-w-xs animate-modal-in`;
+    el.innerHTML = `<span class="font-bold tracking-wide">${escapeHtml(title)}</span>${detail ? `<span class="text-zinc-400 text-[9px] leading-snug">${escapeHtml(detail)}</span>` : ''}`;
+    stack.appendChild(el);
+    setTimeout(() => {
+      el.style.transition = 'all 0.22s ease';
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(6px)';
+      setTimeout(() => el.remove(), 240);
+    }, 3200);
+  }
+
+  function markToggle(id, on) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle('bg-white/20', on);
+    el.classList.toggle('text-white', on);
+  }
+
+  /* =====================================================================
+   * D. SPRING-PHYSICS POD RESIZER
+   * ===================================================================== */
+  class PodResizer {
+    constructor() {
+      this.key = 'designbridge.pods.v3';
+      this.panes = {
+        left: {
+          cssVar: '--left-pod-w', defaultW: 300, min: 252, max: 460,
+          current: 300, target: 300, velocity: 0, collapsed: false, lastOpen: 300,
+          contentEl: document.getElementById('left-pod-content'),
+          collapsedEl: document.getElementById('left-pod-collapsed'),
+        },
+        right: {
+          cssVar: '--right-pod-w', defaultW: 430, min: 350, max: 660,
+          current: 430, target: 430, velocity: 0, collapsed: false, lastOpen: 430,
+          contentEl: document.getElementById('right-slab-content'),
+          collapsedEl: document.getElementById('right-slab-collapsed'),
+        },
+      };
+      this.springs = { drag: { k: 420, c: 34 }, settle: { k: 260, c: 26 } };
+      this.drag = null; this.raf = null; this.last = 0;
+      this._restore(); this._bind(); this._apply();
+    }
+    _bind() {
+      document.querySelectorAll('.pod-resizer').forEach(handle => {
+        const side = handle.dataset.resize;
+        handle.addEventListener('pointerdown', e => {
+          e.preventDefault();
+          handle.setPointerCapture(e.pointerId);
+          handle.classList.add('dragging');
+          this.drag = { side, startX: e.clientX, startW: this.panes[side].target, handle };
+          this._loop();
+        });
+        handle.addEventListener('pointermove', e => {
+          if (!this.drag || this.drag.side !== side) return;
+          const p = this.panes[side];
+          const dx = e.clientX - this.drag.startX;
+          const raw = side === 'left' ? this.drag.startW + dx : this.drag.startW - dx;
+          p.target = Math.max(p.min, Math.min(this._max(side), raw));
+          p.lastOpen = p.target;
+          this._loop();
+        });
+        const end = () => {
+          if (!this.drag || this.drag.side !== side) return;
+          this.drag.handle.classList.remove('dragging');
+          this.drag = null; this._save();
+        };
+        handle.addEventListener('pointerup', end);
+        handle.addEventListener('pointercancel', end);
+        handle.addEventListener('dblclick', () => {
+          const p = this.panes[side];
+          p.target = p.lastOpen = p.defaultW; p.velocity = 140;
+          this._save(); this._loop();
+          toast('POD RESET', `${side.toUpperCase()} panel back to studio default`);
+        });
+      });
+      window.addEventListener('resize', () => {
+        for (const side of ['left', 'right']) {
+          const p = this.panes[side];
+          if (!p.collapsed) p.target = Math.min(p.target, this._max(side));
+        }
+        this._loop();
+      });
+    }
+    setCollapsed(side, collapse, silent = false) {
+      const p = this.panes[side];
+      p.collapsed = collapse;
+      if (collapse) {
+        p.contentEl.classList.add('hidden');
+        p.collapsedEl.classList.remove('hidden');
+        p.collapsedEl.classList.add('flex');
+      } else {
+        p.collapsedEl.classList.add('hidden');
+        p.collapsedEl.classList.remove('flex');
+        p.contentEl.classList.remove('hidden');
+        p.current = Math.max(p.min - 40, 180);
+        p.target = Math.max(p.min, Math.min(this._max(side), p.lastOpen));
+        p.velocity = 520; this._loop();
+      }
+      if (!silent) this._save();
+    }
+    toggle(side) { this.setCollapsed(side, !this.panes[side].collapsed); }
+    _max(side) {
+      const other = side === 'left' ? 'right' : 'left';
+      const ow = this.panes[other].collapsed ? 140 : this.panes[other].target;
+      return Math.max(this.panes[side].min, Math.min(this.panes[side].max, window.innerWidth - ow - 340));
+    }
+    _loop() {
+      if (this.raf) return;
+      this.last = performance.now();
+      const tick = now => {
+        const dt = Math.min((now - this.last) / 1000, 0.032);
+        this.last = now;
+        let moving = false;
+        for (const side of ['left', 'right']) {
+          const p = this.panes[side];
+          if (p.collapsed) continue;
+          const dragging = this.drag && this.drag.side === side;
+          const { k, c } = dragging ? this.springs.drag : this.springs.settle;
+          const disp = p.current - p.target;
+          p.velocity += (-k * disp - c * p.velocity) * dt;
+          p.current += p.velocity * dt;
+          if (Math.abs(disp) > 0.25 || Math.abs(p.velocity) > 0.5 || dragging) moving = true;
+          else { p.current = p.target; p.velocity = 0; }
+        }
+        this._apply();
+        this.raf = moving ? requestAnimationFrame(tick) : null;
+      };
+      this.raf = requestAnimationFrame(tick);
+    }
+    _apply() {
+      for (const side of ['left', 'right']) {
+        const p = this.panes[side];
+        document.documentElement.style.setProperty(p.cssVar, `${p.current.toFixed(2)}px`);
+      }
+    }
+    _save() {
+      const leftWidth = Math.round(this.panes.left.lastOpen);
+      const rightWidth = Math.round(this.panes.right.lastOpen);
+      const leftCollapsed = !!this.panes.left.collapsed;
+      const rightCollapsed = !!this.panes.right.collapsed;
+      try {
+        localStorage.setItem(this.key, JSON.stringify({
+          left: { w: leftWidth, c: leftCollapsed }, right: { w: rightWidth, c: rightCollapsed },
+        }));
+      } catch {}
+      syncSettings({ leftWidth, rightWidth, leftCollapsed, rightCollapsed });
+    }
+    _restore() {
+      try {
+        const s = JSON.parse(localStorage.getItem(this.key));
+        if (!s) return;
+        for (const side of ['left', 'right']) {
+          if (!s[side]) continue;
+          this.panes[side].lastOpen = s[side].w || this.panes[side].defaultW;
+          this.panes[side].current = this.panes[side].target = this.panes[side].lastOpen;
+          if (s[side].c) this.setCollapsed(side, true, true);
+        }
+      } catch {}
+    }
+  }
+  const pods = new PodResizer();
+
+  /* =====================================================================
+   * E. THREE.JS STAGE — renders the REAL compiled asset
+   * The old build drew a hardcoded humanoid robot from regex-scraped
+   * numbers, so the viewport never showed your actual design. Now the
+   * server compiles the revision with designbridge and hands back the
+   * real triangles; this just draws them.
+   * ===================================================================== */
+  const vp = document.getElementById('three-viewport');
+
+  // The 3D stage is optional. If three.js could not load (offline, blocked
+  // CDN, no WebGL) the rest of the Studio must still work: the prompt engine,
+  // the compiler, the report, the blueprints and the exports do not need it.
+  // The old build died completely here, taking the whole tool with it.
+  const HAS3D = (typeof THREE !== 'undefined') && (() => {
+    try {
+      const c = document.createElement('canvas');
+      return !!(c.getContext('webgl2') || c.getContext('webgl'));
+    } catch { return false; }
+  })();
+
+  let scene = null, camera = null, renderer = null, assetRoot = null;
+
+  if (HAS3D) {
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 4000);
+    renderer = new THREE.WebGLRenderer({
+      antialias: true, alpha: true, preserveDrawingBuffer: true, powerPreference: 'high-performance',
+    });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    vp.appendChild(renderer.domElement);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 1.05));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
+    keyLight.position.set(24, 45, 26); scene.add(keyLight);
+    const rimLight = new THREE.DirectionalLight(0x94a3b8, 1.2);
+    rimLight.position.set(-25, 20, -25); scene.add(rimLight);
+    const bounce = new THREE.DirectionalLight(0x475569, 0.6);
+    bounce.position.set(0, -20, 10); scene.add(bounce);
+
+    assetRoot = new THREE.Group();
+    scene.add(assetRoot);
+  } else {
+    vp.innerHTML = `
+      <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div class="glass-pod-panel rounded-2xl px-6 py-5 max-w-md text-center flex flex-col gap-2">
+          <span class="material-symbols-outlined text-[22px] text-amber-300 mx-auto">deployed_code_history</span>
+          <div class="font-mono text-[11px] font-bold text-amber-200">3D STAGE UNAVAILABLE</div>
+          <div class="font-mono text-[10px] text-zinc-300 leading-relaxed">
+            three.js did not load, so the live viewport is off. Everything else still
+            works — the compiler, the report, the 2D blueprints and the exports.
+          </div>
+          <div class="font-mono text-[9px] text-zinc-500 leading-relaxed mt-1">
+            To run fully offline, put <span class="text-zinc-300">three.min.js</span> and
+            <span class="text-zinc-300">tailwind.js</span> in a <span class="text-zinc-300">vendor/</span>
+            folder next to index.html.
+          </div>
+        </div>
+      </div>`;
+  }
+
+  let gridMajor = null, gridSub = null;
+  function buildGrid(span) {
+    [gridMajor, gridSub].forEach(g => {
+      if (!g) return;
+      scene.remove(g);
+      g.geometry.dispose();
+      g.material.dispose();
+    });
+    gridMajor = new THREE.GridHelper(span, Math.max(4, Math.round(span / 4)), 0x475569, 0x1e222d);
+    gridSub = new THREE.GridHelper(span, Math.max(10, Math.round(span)), 0x27272a, 0x14161f);
+    gridMajor.position.y = -0.02;
+    gridSub.position.y = -0.04;
+    scene.add(gridMajor); scene.add(gridSub);
+  }
+  if (HAS3D) buildGrid(50);
+
+  let wireframe = false, autoRotate = false, isPlaying = true;
+  let animTime = 0, animDuration = 0.5;
+  let modelRadius = 20;
+
+  function clearStage() {
+    if (!HAS3D) return;
+    while (assetRoot.children.length) {
+      const c = assetRoot.children[0];
+      assetRoot.remove(c);
+      c.traverse?.(o => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) {
+          if (o.material.map) o.material.map.dispose();
+          o.material.dispose();
+        }
+      });
+    }
+  }
+
+  /** Build a mesh from the server's real triangle soup. */
+  function buildRealMesh(payload) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(payload.positions, 3));
+    if (payload.colors && payload.colors.length === payload.positions.length) {
+      geo.setAttribute('color', new THREE.Float32BufferAttribute(payload.colors, 3));
+    }
+    geo.computeVertexNormals();
+    geo.computeBoundingBox();
+
+    const mat = new THREE.MeshStandardMaterial({
+      vertexColors: !!geo.getAttribute('color'),
+      color: geo.getAttribute('color') ? 0xffffff : 0xc8ccd4,
+      roughness: 0.42, metalness: 0.3,
+      wireframe,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+
+    const grp = new THREE.Group();
+    grp.add(mesh);
+    // Precision CAD edge overlay
+    try {
+      const edges = new THREE.EdgesGeometry(geo, 18);
+      grp.add(new THREE.LineSegments(edges, new THREE.LineBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.15,
+      })));
+    } catch {}
+
+    // Centre the asset on the origin and sit it on the grid
+    const bb = geo.boundingBox;
+    const cx = (bb.min.x + bb.max.x) / 2;
+    const cz = (bb.min.z + bb.max.z) / 2;
+    grp.position.set(-cx, -bb.min.y, -cz);
+
+    const size = new THREE.Vector3().subVectors(bb.max, bb.min);
+    modelRadius = Math.max(size.x, size.y, size.z) || 20;
+    return grp;
+  }
+
+  /** Textures are flat art, so show the real generated PNG on a tile grid. */
+  function buildTexturePlane(url, px) {
+    const grp = new THREE.Group();
+    const loader = new THREE.TextureLoader();
+    loader.setCrossOrigin('anonymous');
+    const tex = loader.load(url + '?t=' + Date.now(), () => renderer.render(scene, camera));
+    tex.magFilter = THREE.NearestFilter;
+    tex.minFilter = THREE.NearestFilter;
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(3, 3);
+    const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.65, metalness: 0.25, wireframe });
+    const cube = new THREE.Mesh(new THREE.BoxGeometry(14, 14, 14), mat);
+    cube.position.y = 7;
+    grp.add(cube);
+    const edges = new THREE.EdgesGeometry(cube.geometry);
+    const lines = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.18 }));
+    lines.position.y = 7;
+    grp.add(lines);
+    modelRadius = 20;
+    if (px) tex.repeat.set(1, 1);
+    return grp;
+  }
+
+  /** Shown when the revision does not compile — honest, not a fake model. */
+  function buildFailureMarker() {
+    const grp = new THREE.Group();
+    const g = new THREE.BoxGeometry(10, 10, 10);
+    const m = new THREE.MeshStandardMaterial({
+      color: 0x2a1518, roughness: 0.8, metalness: 0.1, transparent: true, opacity: 0.35, wireframe: true,
+    });
+    const box = new THREE.Mesh(g, m);
+    box.position.y = 5;
+    grp.add(box);
+    modelRadius = 14;
+    return grp;
+  }
+
+  function fitGrid() {
+    if (!HAS3D) return;
+    buildGrid(Math.max(24, Math.ceil(modelRadius * 2.2 / 10) * 10));
+  }
+
+  let camDist = 60;
+  function frameCamera(preset) {
+    if (!HAS3D) return;
+    camDist = Math.max(18, modelRadius * 2.6);
+    setCameraPreset(preset || state.settings.cameraPreset || 'iso', true);
+  }
+
+  /** Pull the real mesh for the active revision and put it on the stage. */
+  async function rebuildStage() {
+    const p = getActiveProject(); const c = getActiveCommit();
+    clearStage();
+    state.mesh = null;
+    if (!p || !c) { renderOrthoBlueprints(); return; }
+
+    if (!API.LIVE) {
+      if (HAS3D) assetRoot.add(buildFailureMarker());
+      renderOrthoBlueprints();
+      return;
+    }
+
+    // The mesh is fetched whether or not the 3D stage exists — the 2D
+    // blueprints and the telemetry panel are driven from the same payload.
+    let payload = null;
+    try {
+      payload = await apiCall(`/api/mesh/${encodeURIComponent(p.id)}/${encodeURIComponent(c.id)}`);
+    } catch (err) {
+      payload = { ok: false, error: err.message };
+    }
+    state.mesh = payload;
+
+    if (HAS3D) {
+      if (payload && payload.ok && payload.kind === 'texture') {
+        assetRoot.add(buildTexturePlane(API.BASE + payload.preview, payload.size));
+      } else if (payload && payload.ok && payload.positions && payload.positions.length) {
+        assetRoot.add(buildRealMesh(payload));
+      } else {
+        assetRoot.add(buildFailureMarker());
+      }
+      fitGrid();
+      frameCamera();
+    }
+    renderOrthoBlueprints();
+    updateHardwarePanel();
+  }
+
+  /* --- Orbit, zoom, presets ------------------------------------------- */
+  let dragging = false, prev = { x: 0, y: 0 };
+  vp.addEventListener('pointerdown', e => { dragging = true; prev = { x: e.clientX, y: e.clientY }; });
+  window.addEventListener('pointerup', () => { dragging = false; });
+  window.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    assetRoot.rotation.y += (e.clientX - prev.x) * 0.007;
+    assetRoot.rotation.x += (e.clientY - prev.y) * 0.004;
+    document.getElementById('hud-rot-x').textContent = (assetRoot.rotation.x * 57.2958).toFixed(1) + '°';
+    document.getElementById('hud-rot-y').textContent = (assetRoot.rotation.y * 57.2958).toFixed(1) + '°';
+    prev = { x: e.clientX, y: e.clientY };
+  });
+  vp.addEventListener('wheel', e => {
+    e.preventDefault();
+    camDist *= e.deltaY > 0 ? 1.07 : 0.93;
+    camDist = Math.max(modelRadius * 0.6, Math.min(modelRadius * 12, camDist));
+    setCameraPreset(state.settings.cameraPreset || 'iso', true);
+  }, { passive: false });
+
+  const CAM_DIRS = {
+    iso: [0.62, 0.42, 0.78], front: [0, 0.08, 1], side: [1, 0.08, 0], top: [0, 1, 0.001],
+  };
+  function setCameraPreset(key, silent = false) {
+    if (!HAS3D) { if (!silent) syncSettings({ cameraPreset: key }); return; }
+    const dir = CAM_DIRS[key] || CAM_DIRS.iso;
+    const len = Math.hypot(...dir) || 1;
+    const look = new THREE.Vector3(0, modelRadius * 0.35, 0);
+    camera.position.set(
+      look.x + (dir[0] / len) * camDist,
+      look.y + (dir[1] / len) * camDist,
+      look.z + (dir[2] / len) * camDist,
+    );
+    camera.lookAt(look);
+    document.querySelectorAll('.cam-btn').forEach(b => {
+      const on = b.dataset.cam === key;
+      b.className = on
+        ? 'cam-btn px-3 py-1 rounded-full font-mono text-[10px] font-semibold bg-white/20 text-white border border-white/25 shadow-sm tactile-btn'
+        : 'cam-btn px-3 py-1 rounded-full font-mono text-[10px] font-medium text-zinc-400 hover:text-zinc-200 tactile-btn';
+    });
+    if (!silent) syncSettings({ cameraPreset: key });
+  }
+  document.querySelectorAll('.cam-btn').forEach(b =>
+    b.addEventListener('click', () => { state.settings.cameraPreset = b.dataset.cam; setCameraPreset(b.dataset.cam); }));
+
+  /* --- Scrubber & playback -------------------------------------------- */
+  const scrubber = document.getElementById('timeline-scrubber');
+  let scrubbing = false;
+  function scrubFrom(e) {
+    const r = scrubber.getBoundingClientRect();
+    animTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * animDuration;
+    updateScrubberUI();
+  }
+  function updateScrubberUI() {
+    const pct = animDuration ? (animTime / animDuration) * 100 : 0;
+    document.getElementById('scrubber-fill').style.width = `${pct.toFixed(1)}%`;
+    document.getElementById('scrubber-time').textContent = `${animTime.toFixed(2)}s`;
+    document.getElementById('scrubber-total').textContent = `${animDuration.toFixed(2)}s`;
+  }
+  scrubber.addEventListener('pointerdown', e => { scrubbing = true; isPlaying = false; updatePlayIcon(); scrubFrom(e); });
+  window.addEventListener('pointermove', e => { if (scrubbing) scrubFrom(e); });
+  window.addEventListener('pointerup', () => { scrubbing = false; });
+  function updatePlayIcon() {
+    document.querySelector('#play-pause-btn .material-symbols-outlined').textContent = isPlaying ? 'pause' : 'play_arrow';
+  }
+  document.getElementById('play-pause-btn').addEventListener('click', () => { isPlaying = !isPlaying; updatePlayIcon(); });
+
+  document.getElementById('cam-wireframe').addEventListener('click', () => {
+    wireframe = !wireframe;
+    markToggle('cam-wireframe', wireframe);
+    assetRoot.traverse(o => { if (o.material && 'wireframe' in o.material) o.material.wireframe = wireframe; });
+    syncSettings({ wireframe });
+  });
+  document.getElementById('cam-autorotate').addEventListener('click', () => {
+    autoRotate = !autoRotate;
+    markToggle('cam-autorotate', autoRotate);
+    syncSettings({ autoRotate });
+  });
+
+  /* --- Render loop ----------------------------------------------------- */
+  let lastFrame = performance.now(), frames = 0, fpsLast = performance.now(), frameMs = 0;
+  function animate(now) {
+    requestAnimationFrame(animate);
+    if (!HAS3D) return;
+    const dt = Math.min((now - lastFrame) / 1000, 0.05);
+    frameMs = (now - lastFrame);
+    lastFrame = now; frames++;
+    if (now - fpsLast >= 750) {
+      const fps = Math.round((frames * 1000) / (now - fpsLast));
+      const el = document.getElementById('hud-fps');
+      if (el) el.textContent = fps.toFixed(1);
+      const lat = document.getElementById('hw-latency');
+      if (lat) lat.textContent = frameMs.toFixed(2) + ' ms';
+      frames = 0; fpsLast = now;
+    }
+    if (isPlaying && !scrubbing && animDuration > 0) {
+      animTime = (animTime + dt) % animDuration;
+      updateScrubberUI();
+    }
+    if (autoRotate) assetRoot.rotation.y += dt * 0.5;
+    renderer.render(scene, camera);
+  }
+  requestAnimationFrame(animate);
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    const w = Math.round(window.innerWidth / 2), h = Math.round(window.innerHeight / 2);
+    document.getElementById('axis-xneg').textContent = `-X ${w}.0`;
+    document.getElementById('axis-xpos').textContent = `+X ${w}.0`;
+    document.getElementById('axis-ypos').textContent = `+Y ${h}.0`;
+    document.getElementById('axis-yneg').textContent = `-Y ${h}.0`;
+  });
+
+  function captureThumbnail() {
+    if (!HAS3D) return '';
+    try {
+      renderer.render(scene, camera);
+      const cv = document.createElement('canvas');
+      cv.width = 320; cv.height = 180;
+      const ctx = cv.getContext('2d');
+      ctx.fillStyle = '#08090c';
+      ctx.fillRect(0, 0, 320, 180);
+      ctx.drawImage(renderer.domElement, 0, 0, 320, 180);
+      return cv.toDataURL('image/png');
+    } catch { return ''; }
+  }
+
+  /* =====================================================================
+   * F. 2D ORTHOGRAPHIC BLUEPRINTS — projected from the real triangles
+   * ===================================================================== */
+  const ORTHO_VIEWS = [
+    { label: 'FRONT // Z-AXIS', ax: 0, ay: 1, flipY: true, note: 'W' },
+    { label: 'SIDE // X-PROFILE', ax: 2, ay: 1, flipY: true, note: 'D' },
+    { label: 'TOP // NORMAL_Y', ax: 0, ay: 2, flipY: false, note: 'FOOTPRINT' },
+  ];
+
+  function projectPath(pos, ax, ay, flipY, min, max) {
+    const sx = (max[ax] - min[ax]) || 1;
+    const sy = (max[ay] - min[ay]) || 1;
+    const scale = Math.min(76 / sx, 56 / sy);
+    const ox = 50 - ((min[ax] + max[ax]) / 2) * scale;
+    const oy = 40 + ((min[ay] + max[ay]) / 2) * scale * (flipY ? 1 : -1);
+    const X = v => (ox + v * scale).toFixed(2);
+    const Y = v => (oy - v * scale * (flipY ? 1 : -1)).toFixed(2);
+    const seg = [];
+    const step = 9; // one triangle = 9 floats
+    const limit = Math.min(pos.length, 9 * 4000);
+    for (let i = 0; i < limit; i += step) {
+      const x1 = pos[i + ax], y1 = pos[i + ay];
+      const x2 = pos[i + 3 + ax], y2 = pos[i + 3 + ay];
+      const x3 = pos[i + 6 + ax], y3 = pos[i + 6 + ay];
+      seg.push(`M${X(x1)} ${Y(y1)}L${X(x2)} ${Y(y2)}L${X(x3)} ${Y(y3)}Z`);
+    }
+    return seg.join('');
+  }
+
+  function renderOrthoBlueprints() {
+    const strip = document.getElementById('ortho-svg-strip');
+    const p = getActiveProject(); const c = getActiveCommit();
+    const m = state.mesh;
+
+    if (!p || !c) {
+      strip.innerHTML = `<div class="w-44 h-32 rounded-xl recessed-well flex items-center justify-center font-mono text-[9px] text-zinc-500">NO ASSET</div>`;
+      return;
+    }
+
+    if (m && m.ok && m.kind === 'texture') {
+      strip.innerHTML = `
+        <div class="w-44 h-32 rounded-xl bg-black/75 border border-white/10 p-2 relative flex flex-col justify-between overflow-hidden">
+          <div class="flex items-center justify-between z-10">
+            <span class="font-mono text-[8px] font-semibold text-zinc-400 tracking-wider bg-black/80 px-1.5 py-0.5 rounded border border-white/10">TILE // 1:1</span>
+            <span class="font-mono text-[8px] text-emerald-400">${escapeHtml(String(m.size || ''))}px</span>
+          </div>
+          <img src="${API.BASE}/api/preview/${encodeURIComponent(p.id)}/${encodeURIComponent(c.id)}?t=${Date.now()}"
+               class="absolute inset-0 w-full h-full object-contain p-5" style="image-rendering: pixelated;" alt="texture"/>
+          <div class="flex items-center justify-between z-10">
+            <span class="font-mono text-[7px] text-zinc-400">SEAMLESS</span>
+            <span class="font-mono text-[7px] text-zinc-500">${escapeHtml(c.struct)}</span>
+          </div>
+        </div>
+        <div class="w-44 h-32 rounded-xl bg-black/75 border border-white/10 p-2 relative cad-technical-workbench flex flex-col justify-between overflow-hidden">
+          <div class="flex items-center justify-between z-10">
+            <span class="font-mono text-[8px] font-semibold text-zinc-400 tracking-wider bg-black/80 px-1.5 py-0.5 rounded border border-white/10">TILED // 3×3</span>
+            <span class="font-mono text-[8px] text-zinc-500">WRAP</span>
+          </div>
+          <div class="absolute inset-0 p-4" style="background-image:url('${API.BASE}/api/preview/${encodeURIComponent(p.id)}/${encodeURIComponent(c.id)}?t=${Date.now()}');background-size:33.33% 33.33%;image-rendering:pixelated;opacity:0.95"></div>
+          <div class="flex items-center justify-between z-10">
+            <span class="font-mono text-[7px] text-zinc-400">EDGE WRAP</span>
+            <span class="font-mono text-[7px] text-emerald-400">${escapeHtml(c.status)}</span>
+          </div>
+        </div>`;
+      return;
+    }
+
+    if (!m || !m.ok || !m.positions || !m.positions.length) {
+      strip.innerHTML = `
+        <div class="w-[560px] h-20 rounded-xl recessed-well flex items-center justify-center gap-2 font-mono text-[10px] text-amber-300/90 px-4 text-center">
+          <span class="material-symbols-outlined text-[15px]">report</span>
+          <span>${escapeHtml((m && m.error) || 'This revision has no displayable geometry.')}</span>
+        </div>`;
+      return;
+    }
+
+    const { positions: pos, min, max } = m;
+    const dims = [max[0] - min[0], max[1] - min[1], max[2] - min[2]].map(v => (Math.round(v * 100) / 100));
+    strip.innerHTML = ORTHO_VIEWS.map(v => {
+      const d = projectPath(pos, v.ax, v.ay, v.flipY, min, max);
+      const axisDim = v.note === 'FOOTPRINT' ? `${dims[0]}×${dims[2]}` : (v.note === 'W' ? `W: ${dims[0]}` : `D: ${dims[2]}`);
+      return `
+        <div class="w-44 h-32 rounded-xl bg-black/75 border border-white/10 p-2 relative cad-technical-workbench flex flex-col justify-between overflow-hidden group">
+          <div class="flex items-center justify-between z-10">
+            <span class="font-mono text-[8px] font-semibold text-zinc-400 tracking-wider bg-black/80 px-1.5 py-0.5 rounded border border-white/10">${v.label}</span>
+            <span class="font-mono text-[8px] text-emerald-400">H: ${dims[1]}</span>
+          </div>
+          <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <svg class="w-full h-full opacity-90" viewBox="0 0 100 80">
+              <line stroke="rgba(255,255,255,0.15)" stroke-dasharray="2,2" x1="50" x2="50" y1="5" y2="75"></line>
+              <line stroke="rgba(255,255,255,0.15)" stroke-dasharray="2,2" x1="10" x2="90" y1="40" y2="40"></line>
+              <path d="${d}" fill="rgba(255,255,255,0.05)" stroke="#ffffff" stroke-width="0.35" stroke-opacity="0.75"/>
+            </svg>
+          </div>
+          <div class="flex items-center justify-between z-10">
+            <span class="font-mono text-[7px] text-zinc-400">${escapeHtml(axisDim)}</span>
+            <span class="font-mono text-[7px] text-zinc-500">${m.triangles} TRI</span>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function updateHardwarePanel() {
+    const p = getActiveProject();
+    const m = state.mesh;
+    const tris = (m && m.triangles) || 0;
+    const kb = Math.max(0, (m && m.positions ? m.positions.length * 4 * 2 / 1024 : 0));
+    const mb = kb / 1024;
+    const pct = Math.max(0, Math.min(1, mb / 128));
+    const lit = Math.round(pct * 12);
+    document.getElementById('hw-tris').textContent = tris ? tris.toLocaleString() : '—';
+    document.getElementById('hw-queue').textContent = p ? String(p.commits.length) : '—';
+    document.getElementById('hw-vram').textContent = `${mb.toFixed(2)} / 128 MB`;
+    document.getElementById('hw-bus').textContent = `${(kb / Math.max(1, frameMs) * 1.2).toFixed(1)} MB/s BUS`;
+    const segs = document.getElementById('hw-segments');
+    segs.innerHTML = Array.from({ length: 12 }, (_, i) =>
+      i < Math.max(1, lit)
+        ? `<div class="h-2 rounded-sm bg-emerald-400 shadow-[0_0_6px_#10b981]"></div>`
+        : `<div class="h-2 rounded-sm bg-white/10"></div>`
+    ).join('');
+  }
+
+  /* =====================================================================
+   * G. PROMPT ENGINE — compiled by the server, not hand-rolled here
+   * The previous build assembled a ~10 line header in JavaScript and never
+   * called /api/prompt, so the model never received the grammar, the
+   * reasoning ladder, the failure catalogue or the output contract. That
+   * is why generated designs kept coming back in invented syntax. The
+   * prompt now comes from designbridge.prompt_for() every time.
+   * ===================================================================== */
+  async function buildEngineeredPrompt() {
+    const p = getActiveProject(); const c = getActiveCommit();
+    if (!p || !c) return '';
+    const payload = {
+      kind: p.track,
+      mode: state.activeMode,
+      instruction: state.lastInstruction || '',
+      dsl: c.dsl || '',
+      report: c.report || '',
+      name: p.name, tag: c.tag, branch: c.branch,
+      includeReport: document.getElementById('ctx-include-report').checked,
+      fullDsl: document.getElementById('ctx-full-dsl').checked,
+    };
+    if (API.LIVE) {
+      try {
+        const r = await apiCall('/api/prompt', { method: 'POST', body: JSON.stringify(payload) });
+        if (r && r.prompt) return r.prompt;
+      } catch (err) {
+        console.warn('prompt compile failed, falling back:', err.message);
+      }
+    }
+    // Minimal offline fallback. Deliberately labelled so it is never
+    // mistaken for the real compiled prompt.
+    return [
+      `[OFFLINE FALLBACK PROMPT - studio_server.py is not reachable, so the`,
+      ` full grammar, reasoning ladder and output contract are missing.`,
+      ` Start the server and press GEN again for the real prompt.]`,
+      ``,
+      `TRACK: ${p.track.toUpperCase()}   MODE: ${state.activeMode.toUpperCase()}`,
+      `BRIEF: ${state.lastInstruction || '(none given)'}`,
+      ``,
+      `CURRENT SOURCE`,
+      c.dsl || '(empty)',
+    ].join('\n');
+  }
+
+  async function refreshPromptPreview() {
+    const text = await buildEngineeredPrompt();
+    state.promptText = text;
+    const well = document.getElementById('prompt-peek-well');
+    well.textContent = text || '—';
+    const tok = Math.round(text.length / 4);
+    document.getElementById('prompt-token-badge').textContent = tok ? `~${tok.toLocaleString()} TOK` : '— TOK';
+    document.getElementById('header-token-count').textContent = tok
+      ? (tok >= 1000 ? (tok / 1000).toFixed(2) + 'k' : String(tok)) : '—';
+    const bars = document.getElementById('token-bars').children;
+    const lit = Math.max(1, Math.min(5, Math.ceil(tok / 500)));
+    for (let i = 0; i < bars.length; i++) {
+      bars[i].className = i < lit ? 'w-1.5 h-2.5 rounded-sm bg-zinc-200' : 'w-1.5 h-2.5 rounded-sm bg-white/15';
+    }
+  }
+
+  /* =====================================================================
+   * H. DSL SYNTAX WELL — line numbers + restrained token colouring
+   * ===================================================================== */
+  const DSL_KEYWORDS = new Set([
+    'model', 'texture', 'design', 'bone', 'box', 'animation', 'key',
+    'profile', 'solid', 'assembly', 'part', 'note', 'fill', 'noise',
+    'gradient', 'brick', 'planks', 'checker', 'stripes', 'scatter',
+    'veins', 'dither', 'bevel', 'outline', 'path', 'slot', 'hole',
+    'circle', 'ellipse', 'rect', 'ngon', 'poly', 'revolve', 'extrude', 'loft',
+  ]);
+
+  function highlightDsl(src) {
+    const lines = (src || '').split('\n');
+    return lines.map((raw, i) => {
+      const n = String(i + 1).padStart(2, '0');
+      let body;
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        body = '<span>&nbsp;</span>';
+      } else if (trimmed.startsWith('#') || trimmed.startsWith('//')) {
+        body = `<span class="tok-com">${escapeHtml(raw)}</span>`;
+      } else {
+        const indent = raw.match(/^\s*/)[0].replace(/ /g, '&nbsp;');
+        let out = '';
+        // tokenise: strings, hex colours, key=, numbers, words
+        const re = /("[^"]*")|(#[0-9a-fA-F]{3,8})|([A-Za-z_][\w.]*)(?==)|(-?\d+\.?\d*)|([A-Za-z_][\w.$]*)|(\s+)|(.)/g;
+        let mt, first = true;
+        while ((mt = re.exec(trimmed)) !== null) {
+          const [all, str, hex, attr, num, word, ws, other] = mt;
+          if (str) out += `<span class="tok-str">${escapeHtml(str)}</span>`;
+          else if (hex) out += `<span class="tok-hex">${escapeHtml(hex)}</span>`;
+          else if (attr) out += `<span class="tok-attr">${escapeHtml(attr)}</span>`;
+          else if (num) out += `<span class="tok-num">${escapeHtml(num)}</span>`;
+          else if (word) {
+            const cls = first && DSL_KEYWORDS.has(word.toLowerCase()) ? 'tok-key'
+                      : DSL_KEYWORDS.has(word.toLowerCase()) ? 'tok-key' : 'tok-name';
+            out += `<span class="${cls}">${escapeHtml(word)}</span>`;
+          } else if (ws) out += ws.replace(/ /g, '&nbsp;');
+          else out += escapeHtml(other || '');
+          if (!ws) first = false;
+        }
+        body = `<span>${indent}${out}</span>`;
+      }
+      return `<div class="dsl-line"><span class="dsl-gutter">${n}</span>${body}</div>`;
+    }).join('');
+  }
+
+  /* =====================================================================
+   * I. MAIN RENDER
+   * ===================================================================== */
+  function renderAll() {
+    const p = getActiveProject();
+    const c = getActiveCommit();
+
+    if (!p || !c) {
+      document.getElementById('header-project-name').textContent = 'NO ASSET';
+      document.getElementById('project-list-slot').innerHTML =
+        `<div class="p-4 rounded-xl recessed-well font-mono text-[10px] text-zinc-500 text-center">No assets yet.<br/>Press NEW_ASSET to start one.</div>`;
+      document.getElementById('commit-rail-slot').innerHTML = '';
+      document.getElementById('branch-pills-slot').innerHTML = '';
+      document.getElementById('dsl-well').innerHTML = '';
+      return;
+    }
+
+    // --- Header
+    document.getElementById('header-project-name').textContent = p.name;
+    document.getElementById('header-track-pill').textContent = p.track.toUpperCase();
+    document.getElementById('top-branch-label').textContent = p.activeBranch;
+    document.getElementById('top-commit-label').textContent = '@' + c.tag;
+    document.getElementById('hud-head-tag').textContent = `${p.activeBranch}@${c.tag}`;
+    document.getElementById('left-collapsed-label').textContent = `${p.name} · ${p.activeBranch}`;
+    document.getElementById('project-count-pill').textContent =
+      String(Object.keys(state.projects).indexOf(p.id) + 1).padStart(2, '0') + '/' +
+      String(Object.keys(state.projects).length).padStart(2, '0');
+
+    const pass = c.status === 'PASS';
+    const sPill = document.getElementById('header-status-pill');
+    const sText = document.getElementById('header-status-text');
+    const dot = document.getElementById('header-led-dot');
+    const ping = document.getElementById('header-led-ping');
+    if (pass) {
+      sPill.className = 'font-mono text-[9px] font-semibold px-2 py-0.5 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 shadow-glow-emerald';
+      sText.textContent = p.track === 'prop' ? 'WATERTIGHT' : 'VERIFIED';
+      dot.className = 'relative inline-flex rounded-full h-2 w-2 bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.7)]';
+      ping.className = 'animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60';
+    } else {
+      sPill.className = 'font-mono text-[9px] font-semibold px-2 py-0.5 rounded-full bg-red-950/80 text-red-300 border border-red-500/40 flex items-center gap-1';
+      sText.textContent = `${c.errors} ERROR${c.errors === 1 ? '' : 'S'}`;
+      dot.className = 'relative inline-flex rounded-full h-2 w-2 bg-red-400';
+      ping.className = 'animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-60';
+    }
+    document.getElementById('pipeline-pill').textContent = pass ? 'PIPELINE READY' : 'PIPELINE BLOCKED';
+    document.getElementById('pipeline-pill').className = pass
+      ? 'font-mono text-[9px] text-emerald-300 font-semibold px-2 py-0.5 rounded-full bg-emerald-950/70 border border-emerald-500/30'
+      : 'font-mono text-[9px] text-red-300 font-semibold px-2 py-0.5 rounded-full bg-red-950/70 border border-red-500/35';
+
+    // --- Scene cartridges
+    const slot = document.getElementById('project-list-slot');
+    const total = Object.keys(state.projects).length;
+    slot.innerHTML = Object.values(state.projects).map(item => {
+      const active = item.id === p.id;
+      const head = item.commits.find(x => x.id === item.headCommitId) || item.commits[item.commits.length - 1] || {};
+      return `
+        <div class="proj-card group flex items-center justify-between gap-1 p-2.5 rounded-xl glass-card-item ${active ? 'glass-card-active' : ''} cursor-pointer tactile-btn" data-proj="${escapeHtml(item.id)}">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <div class="w-8 h-8 rounded-lg ${active ? 'bg-white/15 border-white/20 text-white' : 'bg-white/[0.05] border-white/[0.08] text-zinc-400 group-hover:text-zinc-200'} border flex items-center justify-center shadow-inner shrink-0">
+              <span class="material-symbols-outlined text-[15px]">${escapeHtml(item.icon || 'view_in_ar')}</span>
+            </div>
+            <div class="flex flex-col min-w-0">
+              <span class="font-mono text-xs font-semibold ${active ? 'text-white' : 'text-zinc-300'} truncate">${escapeHtml(item.name)}</span>
+              <span class="font-mono text-[8px] text-zinc-400 uppercase tracking-wide truncate">${escapeHtml(item.track)} · ${escapeHtml(head.struct || '—')}</span>
+            </div>
+          </div>
+          <div class="flex items-center gap-0.5 shrink-0">
+            <div class="hidden group-hover:flex items-center gap-0.5">
+              <button class="proj-act-btn w-5 h-5 rounded-md bg-white/[0.07] hover:bg-white/[0.18] text-zinc-300 flex items-center justify-center" data-act="rename" data-pid="${escapeHtml(item.id)}" title="Rename"><span class="material-symbols-outlined text-[11px]">edit</span></button>
+              <button class="proj-act-btn w-5 h-5 rounded-md bg-white/[0.07] hover:bg-white/[0.18] text-zinc-300 flex items-center justify-center" data-act="duplicate" data-pid="${escapeHtml(item.id)}" title="Duplicate"><span class="material-symbols-outlined text-[11px]">content_copy</span></button>
+              ${total > 1 ? `<button class="proj-act-btn w-5 h-5 rounded-md bg-red-500/15 hover:bg-red-500/35 text-red-300 flex items-center justify-center" data-act="delete" data-pid="${escapeHtml(item.id)}" title="Delete"><span class="material-symbols-outlined text-[11px]">delete</span></button>` : ''}
+            </div>
+            ${active
+              ? `<span class="group-hover:hidden font-mono text-[8px] font-semibold px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 shadow-glow-emerald">ACTIVE</span>`
+              : `<span class="group-hover:hidden font-mono text-[9px] text-zinc-500">READY</span>`}
+          </div>
+        </div>`;
+    }).join('');
+
+    slot.querySelectorAll('.proj-card').forEach(el => {
+      el.addEventListener('click', e => {
+        if (e.target.closest('.proj-act-btn')) return;
+        state.activeProjectId = el.dataset.proj;
+        state.branchFilter = 'ALL';
+        syncSettings({ activeProjectId: state.activeProjectId });
+        renderAll(); rebuildStage(); refreshPromptPreview();
+      });
+    });
+    slot.querySelectorAll('.proj-act-btn').forEach(btn => {
+      btn.addEventListener('click', async e => {
+        e.stopPropagation();
+        const { act, pid } = btn.dataset;
+        if (act === 'rename') await renameProject(pid);
+        else if (act === 'duplicate') await duplicateProject(pid);
+        else if (act === 'delete') await deleteProject(pid);
+      });
+    });
+
+    // --- Branch pills
+    const bSlot = document.getElementById('branch-pills-slot');
+    const branchNames = Object.keys(p.branches);
+    bSlot.innerHTML = `
+      <button class="br-pill px-2 py-0.5 rounded-full font-mono text-[8.5px] font-semibold whitespace-nowrap border tactile-btn ${state.branchFilter === 'ALL' ? 'bg-white/15 text-white border-white/25' : 'bg-white/[0.04] text-zinc-400 border-white/10'}" data-br="ALL">ALL (${p.commits.length})</button>
+      ${branchNames.map(bn => {
+        const sel = state.branchFilter === bn;
+        return `<button class="br-pill flex items-center gap-1 px-2 py-0.5 rounded-full font-mono text-[8.5px] font-semibold whitespace-nowrap border tactile-btn ${sel ? 'bg-white/15 text-white border-white/30' : 'bg-white/[0.04] text-zinc-300 border-white/10'}" data-br="${escapeHtml(bn)}">
+          <span class="w-1.5 h-1.5 rounded-full" style="background:${escapeHtml(p.branches[bn].color || '#d4d4d8')}"></span>${escapeHtml(bn)}
+        </button>`;
+      }).join('')}`;
+    bSlot.querySelectorAll('.br-pill').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.branchFilter = btn.dataset.br;
+        if (btn.dataset.br !== 'ALL' && p.branches[btn.dataset.br]) checkoutCommit(p.branches[btn.dataset.br].head, true);
+        else renderAll();
+      });
+    });
+
+    // --- Revision rail
+    const rail = document.getElementById('commit-rail-slot');
+    const list = [...p.commits].reverse().filter(cm => state.branchFilter === 'ALL' || cm.branch === state.branchFilter);
+    rail.innerHTML = list.map(cm => {
+      const isHead = cm.id === p.headCommitId;
+      const col = (p.branches[cm.branch] && p.branches[cm.branch].color) || '#d4d4d8';
+      const ok = cm.status === 'PASS';
+      return `
+        <div class="commit-card p-3 rounded-2xl glass-card-item ${isHead ? 'glass-card-active' : ''} cursor-pointer tactile-btn relative overflow-hidden pl-5" data-cid="${escapeHtml(cm.id)}">
+          <div class="absolute left-2.5 top-0 bottom-0 w-[2px] opacity-30" style="background:${escapeHtml(col)}"></div>
+          <div class="absolute left-[6.5px] top-4 w-2.5 h-2.5 rounded-full border-2 border-[#12141a]" style="background:${escapeHtml(col)}"></div>
+          <div class="flex items-center justify-between mb-1.5 gap-1">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="font-mono text-xs font-bold ${isHead ? 'text-white bg-white/10 border-white/20' : 'text-zinc-200 bg-white/[0.06] border-white/10'} px-2 py-0.5 rounded-md border">${escapeHtml(cm.tag)}</span>
+              <span class="font-mono text-[9px] text-zinc-400">${escapeHtml(cm.time)}</span>
+              ${state.branchFilter === 'ALL' && branchNames.length > 1 ? `<span class="font-mono text-[8px] px-1.5 py-0.5 rounded-full border truncate" style="color:${escapeHtml(col)};border-color:${escapeHtml(col)}55;background:${escapeHtml(col)}18">${escapeHtml(cm.branch)}</span>` : ''}
+            </div>
+            ${ok
+              ? `<span class="font-mono text-[8px] font-semibold px-2 py-0.5 rounded-full bg-emerald-950/90 text-emerald-300 border border-emerald-500/40 shadow-glow-emerald flex items-center gap-1 shrink-0"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400 ${isHead ? 'animate-tech-pulse text-emerald-400' : ''}"></span>${escapeHtml(p.track === 'prop' ? 'WATERTIGHT' : 'VERIFIED')}</span>`
+              : `<span class="font-mono text-[8px] font-semibold px-1.5 py-0.5 rounded bg-red-950/70 text-red-400 border border-red-500/30 shrink-0">FLAGGED</span>`}
+          </div>
+          <div class="flex items-start gap-2 mb-1">
+            ${cm.thumbnail ? `<img src="${API.BASE}${escapeHtml(cm.thumbnail)}" class="w-11 h-7 rounded-md object-cover border border-white/10 shrink-0 bg-black/60" alt=""/>` : ''}
+            <div class="font-mono text-[10px] text-zinc-200 font-medium leading-snug min-w-0 flex-1">${escapeHtml(cm.note)}</div>
+          </div>
+          <div class="flex items-center gap-2 font-mono text-[8px] text-zinc-400">
+            <span>${escapeHtml(cm.struct || '—')}</span><span class="text-zinc-600">•</span>
+            <span>${escapeHtml(cm.bounds || '—')}</span>
+            ${ok ? `<span class="text-zinc-600">•</span><span class="text-emerald-400 font-semibold uppercase">${escapeHtml(cm.anim || '')}</span>` : `<span class="text-zinc-600">•</span><span class="text-red-400/80">${cm.errors} error${cm.errors === 1 ? '' : 's'}</span>`}
+            <button class="fork-inline-btn ml-auto text-zinc-300 hover:text-white font-semibold" data-fork-cid="${escapeHtml(cm.id)}" title="Fork a branch from ${escapeHtml(cm.tag)}">+ FORK</button>
+          </div>
+        </div>`;
+    }).join('');
+    rail.querySelectorAll('.commit-card').forEach(card => {
+      card.addEventListener('click', e => {
+        if (e.target.closest('.fork-inline-btn')) return;
+        checkoutCommit(card.dataset.cid);
+      });
+    });
+    rail.querySelectorAll('.fork-inline-btn').forEach(btn => {
+      btn.addEventListener('click', e => { e.stopPropagation(); promptFork(btn.dataset.forkCid); });
+    });
+
+    // --- Right slab
+    document.getElementById('mode-target-commit').textContent = `${c.tag} (${p.activeBranch})`;
+    document.querySelectorAll('.mode-switch-btn').forEach(btn => {
+      const on = btn.dataset.mode === state.activeMode;
+      btn.className = `mode-switch-btn flex items-center justify-center gap-1 py-1.5 px-2 rounded-xl font-mono text-[9.5px] border tactile-btn ${on ? 'font-bold bg-white/20 text-white border-white/25 shadow-sm' : 'font-semibold text-zinc-400 hover:text-zinc-200 border-transparent'}`;
+    });
+    const helper = {
+      edit: `Refining ${escapeHtml(c.tag)} on <span class="text-zinc-100">${escapeHtml(p.activeBranch)}</span> · keeps current source`,
+      new_take: `Fresh draft inside <span class="text-zinc-100">${escapeHtml(p.name)}</span> · ignores old geometry`,
+      fix: `Repairing <span class="text-red-300">${escapeHtml(c.tag)}</span> · injects compiler diagnostics`,
+    };
+    document.getElementById('mode-helper-text').innerHTML = helper[state.activeMode];
+    document.getElementById('step1-title').textContent =
+      ({ edit: `EDIT PROMPT (${c.tag})`, new_take: 'NEW TAKE PROMPT', fix: `REPAIR PROMPT (${c.tag})` })[state.activeMode];
+    document.getElementById('operator-instruction').textContent =
+      state.lastInstruction ? `"${state.lastInstruction}"` : '(no instruction yet — type one in the bar below and press GEN)';
+    document.getElementById('operator-scope').textContent = `${c.tag} ${state.activeMode.toUpperCase().replace('_', ' ')}`;
+
+    document.getElementById('dsl-well').innerHTML = highlightDsl(c.dsl);
+    document.getElementById('well-kind-tag').textContent = `${p.track.toUpperCase()} // ${c.tag}`;
+
+    document.getElementById('diag-bounds').textContent = c.bounds || '—';
+    document.getElementById('diag-struct').textContent = c.struct || '—';
+    document.getElementById('diag-track').textContent = p.track.toUpperCase();
+    const ds = document.getElementById('diag-status');
+    ds.textContent = c.errors ? `${c.errors} ERR` : '0 ERR';
+    ds.className = `font-mono text-[10px] font-semibold ${c.errors ? 'text-red-400' : 'text-emerald-400'}`;
+    document.getElementById('anim-name-label').textContent = c.anim || 'static';
+    document.getElementById('dock-collapsed-status').textContent = pass ? 'VERIFIED' : 'FLAGGED';
+
+    // --- Quick chips, per track and mode
+    const chips = state.activeMode === 'fix'
+      ? ['Fix every error', 'Give each box real thickness', 'Reconnect the pivots']
+      : p.track === 'model'
+        ? ['+ Longer arms', '+ Heavier torso', '+ Add a visor', '+ Idle animation']
+        : p.track === 'prop'
+          ? ['+ Thicker wall', '+ Taller body', '+ Rounder handle']
+          : ['+ More pitting', '+ Stronger veins', '+ Rougher surface'];
+    const row = document.getElementById('quick-chips-row');
+    row.innerHTML = chips.map(ch =>
+      `<button class="chip-btn px-2.5 py-1 rounded-full bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 font-mono text-[9px] font-medium text-zinc-300 hover:text-white whitespace-nowrap tactile-btn">${escapeHtml(ch)}</button>`
+    ).join('');
+    row.querySelectorAll('.chip-btn').forEach(b => b.addEventListener('click', () => {
+      const inp = document.getElementById('prompt-input');
+      inp.value = b.textContent.replace(/^\+\s*/, '');
+      inp.focus();
+    }));
+
+    // --- Source / report tabs
+    document.getElementById('dsl-tab-header').textContent = `SOURCE // ${c.tag} · ${c.branch}`;
+    document.getElementById('direct-dsl-editor').value = c.dsl || '';
+    const rep = document.getElementById('compiler-report-slot');
+    rep.innerHTML = `<pre class="whitespace-pre-wrap text-[10px] ${c.errors ? 'text-red-200/90' : 'text-zinc-300'}">${escapeHtml(c.report || '(no report)')}</pre>`;
+
+    populateDiffSelectors();
+    renderChatHistory();
+    updateHardwarePanel();
+  }
+
+  function renderChatHistory() {
+    const p = getActiveProject();
+    const slot = document.getElementById('chat-history-slot');
+    if (!p || !slot) return;
+    const hist = p.chatHistory || [];
+    document.getElementById('history-tab-header').textContent = `PROMPT LOG // ${p.name}`;
+    document.getElementById('history-count-pill').textContent = `${hist.length} ENTR${hist.length === 1 ? 'Y' : 'IES'}`;
+    if (!hist.length) {
+      slot.innerHTML = `<div class="p-4 rounded-2xl recessed-well font-mono text-[10px] text-zinc-500 text-center">No saved prompts yet for ${escapeHtml(p.name)}.<br/>Every compile is logged here with its prompt and the model's reply.</div>`;
+      return;
+    }
+    slot.innerHTML = hist.map((h, i) => `
+      <div class="p-2.5 rounded-2xl glass-card-item flex flex-col gap-1.5">
+        <div class="flex items-center justify-between gap-2 font-mono text-[8.5px]">
+          <div class="flex items-center gap-1.5">
+            <span class="px-1.5 py-0.5 rounded bg-white/[0.08] text-zinc-200 border border-white/15 uppercase font-bold">${escapeHtml(h.mode || 'edit')}</span>
+            <span class="text-zinc-400">${escapeHtml(h.branch || 'main')}</span>
+          </div>
+          <span class="text-zinc-500">${escapeHtml((h.createdAt || '').slice(0, 16).replace('T', ' '))}</span>
+        </div>
+        <div class="font-mono text-[10px] text-zinc-200 leading-snug">${escapeHtml(h.userPrompt || '(no instruction note)')}</div>
+        <div class="flex items-center gap-1.5 pt-1">
+          <button class="hist-use px-2 py-0.5 rounded-full bg-white/[0.06] hover:bg-white/[0.15] border border-white/10 font-mono text-[8.5px] text-zinc-300 tactile-btn" data-idx="${i}">REUSE PROMPT</button>
+          ${h.extractedDsl ? `<button class="hist-load px-2 py-0.5 rounded-full bg-white/[0.1] hover:bg-white/[0.2] border border-white/15 font-mono text-[8.5px] text-zinc-100 tactile-btn" data-idx="${i}">LOAD SOURCE</button>` : ''}
+          ${h.engineeredPrompt ? `<button class="hist-peek px-2 py-0.5 rounded-full bg-white/[0.06] hover:bg-white/[0.15] border border-white/10 font-mono text-[8.5px] text-zinc-300 tactile-btn" data-idx="${i}">VIEW PROMPT</button>` : ''}
+        </div>
+      </div>`).join('');
+
+    slot.querySelectorAll('.hist-use').forEach(b => b.addEventListener('click', async () => {
+      const it = hist[+b.dataset.idx]; if (!it) return;
+      state.lastInstruction = it.userPrompt || '';
+      document.getElementById('prompt-input').value = it.userPrompt || '';
+      switchRightTab('workbench'); renderAll(); await refreshPromptPreview();
+      toast('PROMPT RESTORED', 'Loaded into the Step 1 composer');
+    }));
+    slot.querySelectorAll('.hist-load').forEach(b => b.addEventListener('click', () => {
+      const it = hist[+b.dataset.idx]; if (!it) return;
+      document.getElementById('ai-cassette-input').value = it.rawAiResponse || it.extractedDsl || '';
+      switchRightTab('workbench');
+      toast('RESPONSE LOADED', 'Ready to compile in Step 2');
+    }));
+    slot.querySelectorAll('.hist-peek').forEach(b => b.addEventListener('click', () => {
+      const it = hist[+b.dataset.idx]; if (!it) return;
+      const well = document.getElementById('prompt-peek-well');
+      well.textContent = it.engineeredPrompt;
+      well.classList.remove('hidden');
+      document.getElementById('dsl-toggle-label').textContent = 'HIDE PROMPT';
+      switchRightTab('workbench');
+      toast('ARCHIVED PROMPT', `${it.engineeredPrompt.length.toLocaleString()} chars as sent`);
+    }));
+  }
+
+  /* =====================================================================
+   * J. PROJECT CRUD, CHECKOUT, FORK & MERGE
+   * ===================================================================== */
+  function requireServer() {
+    if (!API.LIVE) {
+      toast('NO SERVER', 'Start studio_server.py — nothing can be saved or compiled without it.', 'err');
+      return false;
+    }
+    return true;
+  }
+  async function afterMutation(boot, title, detail, tone = 'ok') {
+    applyBootstrapState(boot);
+    state.selectedDagCommitId = getActiveProject()?.headCommitId || null;
+    renderAll(); await rebuildStage(); await refreshPromptPreview();
+    toast(title, detail, tone);
+  }
+
+  async function renameProject(pid) {
+    const p = state.projects[pid]; if (!p || !requireServer()) return;
+    const next = window.prompt(`Rename asset "${p.name}":`, p.name);
+    if (!next || !next.trim() || next.trim() === p.name) return;
+    try {
+      const boot = await apiCall(`/api/projects/${encodeURIComponent(pid)}`, { method: 'PATCH', body: JSON.stringify({ name: next.trim() }) });
+      await afterMutation(boot, 'ASSET RENAMED', `Now "${state.projects[pid]?.name || next.trim()}"`);
+    } catch (err) { toast('RENAME FAILED', err.message, 'err'); }
+  }
+
+  async function duplicateProject(pid) {
+    if (!state.projects[pid] || !requireServer()) return;
+    try {
+      const boot = await apiCall(`/api/projects/${encodeURIComponent(pid)}/duplicate`, { method: 'POST', body: JSON.stringify({}) });
+      await afterMutation(boot, 'ASSET DUPLICATED', `Opened ${getActiveProject()?.name || ''}`);
+    } catch (err) { toast('DUPLICATE FAILED', err.message, 'err'); }
+  }
+
+  async function deleteProject(pid) {
+    const p = state.projects[pid]; if (!p || !requireServer()) return;
+    if (Object.keys(state.projects).length <= 1) { toast('CANNOT DELETE', 'At least one asset must remain', 'warn'); return; }
+    if (!window.confirm(`Delete "${p.name}" and all of its revisions from disk?`)) return;
+    try {
+      const boot = await apiCall(`/api/projects/${encodeURIComponent(pid)}`, { method: 'DELETE' });
+      state.branchFilter = 'ALL';
+      await afterMutation(boot, 'ASSET DELETED', p.name, 'warn');
+    } catch (err) { toast('DELETE FAILED', err.message, 'err'); }
+  }
+
+  async function checkoutCommit(cid, quiet = false) {
+    const p = getActiveProject(); if (!p || !requireServer()) return;
+    const target = p.commits.find(x => x.id === cid); if (!target) return;
+    try {
+      const boot = await apiCall('/api/checkout', { method: 'POST', body: JSON.stringify({ projectId: p.id, commitId: cid }) });
+      applyBootstrapState(boot);
+      state.selectedDagCommitId = cid;
+      renderAll(); await rebuildStage(); await refreshPromptPreview();
+      if (!quiet) toast('CHECKED OUT', `${p.name} → ${target.tag} (${target.branch})`);
+    } catch (err) { toast('CHECKOUT FAILED', err.message, 'err'); }
+  }
+
+  async function promptFork(sourceCid) {
+    const p = getActiveProject(); if (!p || !requireServer()) return;
+    const src = p.commits.find(x => x.id === sourceCid) || getActiveCommit();
+    const suggested = `exp/${(p.name.split('_')[0] || 'alt')}-${Object.keys(p.branches).length + 1}`;
+    const name = window.prompt(`New branch forked from ${src.tag}:`, suggested);
+    if (!name || !name.trim()) return;
+    const clean = name.trim().replace(/\s+/g, '-').toLowerCase();
+    if (p.branches[clean]) { toast('BRANCH EXISTS', clean, 'warn'); return; }
+    try {
+      const boot = await apiCall('/api/branches/fork', {
+        method: 'POST',
+        body: JSON.stringify({ projectId: p.id, sourceCommitId: src.id, branchName: clean }),
+      });
+      state.branchFilter = 'ALL';
+      await afterMutation(boot, 'BRANCH FORKED', `Created "${clean}" at ${src.tag}`);
+      renderBranchMap();
+    } catch (err) { toast('FORK FAILED', err.message, 'err'); }
+  }
+
+  async function mergeIntoMain(src) {
+    const p = getActiveProject(); if (!p || !requireServer()) return;
+    if (src.branch === 'main') { toast('ALREADY ON MAIN', src.tag, 'warn'); return; }
+    try {
+      const boot = await apiCall('/api/branches/merge', {
+        method: 'POST', body: JSON.stringify({ projectId: p.id, sourceCommitId: src.id }),
+      });
+      await afterMutation(boot, 'MERGED INTO MAIN', `${src.branch} (${src.tag}) → main`);
+      renderBranchMap();
+    } catch (err) { toast('MERGE FAILED', err.message, 'err'); }
+  }
+
+  /* =====================================================================
+   * K. VISUAL BRANCH MAP
+   * ===================================================================== */
+  function renderBranchMap() {
+    const p = getActiveProject(); if (!p) return;
+    const svg = document.getElementById('dag-svg');
+    document.getElementById('dag-project-badge').textContent = `${p.name} · ${Object.keys(p.branches).length} branch${Object.keys(p.branches).length === 1 ? '' : 'es'}`;
+
+    const order = Object.keys(p.branches);
+    const laneH = 128, colW = 148, x0 = 95, y0 = 85;
+    const pos = {};
+    p.commits.forEach((cm, i) => {
+      const lane = Math.max(0, order.indexOf(cm.branch));
+      pos[cm.id] = { x: x0 + i * colW, y: y0 + lane * laneH, lane };
+    });
+    const W = Math.max(680, x0 + p.commits.length * colW + 80);
+    const H = Math.max(360, y0 + order.length * laneH + 60);
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.style.minWidth = W + 'px';
+
+    let out = '';
+    order.forEach((bn, i) => {
+      const col = p.branches[bn].color || '#d4d4d8';
+      const y = y0 + i * laneH;
+      out += `<line x1="24" y1="${y}" x2="${W - 24}" y2="${y}" stroke="${col}" stroke-opacity="0.14" stroke-dasharray="4,5" stroke-width="1.5"/>`;
+      out += `<rect x="16" y="${y - 38}" rx="8" ry="8" width="${Math.max(66, bn.length * 7.2 + 20)}" height="20" fill="${col}1f" stroke="${col}55" stroke-width="1"/>`;
+      out += `<text x="26" y="${y - 25}" fill="${col}" font-family="JetBrains Mono" font-size="10" font-weight="700">${escapeHtml(bn)}</text>`;
+    });
+    p.commits.forEach(cm => {
+      const to = pos[cm.id];
+      const col = (p.branches[cm.branch] && p.branches[cm.branch].color) || '#d4d4d8';
+      const edge = (fromId, dashed) => {
+        if (!fromId || !pos[fromId]) return;
+        const fr = pos[fromId]; const mx = (fr.x + to.x) / 2;
+        out += `<path d="M ${fr.x} ${fr.y} C ${mx} ${fr.y}, ${mx} ${to.y}, ${to.x} ${to.y}" fill="none" stroke="${col}" stroke-width="${dashed ? 2 : 2.8}" stroke-opacity="${dashed ? 0.55 : 0.8}" ${dashed ? 'stroke-dasharray="5,4"' : ''}/>`;
+      };
+      edge(cm.parentId, false);
+      if (cm.mergeParentId) edge(cm.mergeParentId, true);
+    });
+    p.commits.forEach(cm => {
+      const pt = pos[cm.id];
+      const col = (p.branches[cm.branch] && p.branches[cm.branch].color) || '#d4d4d8';
+      const isHead = cm.id === p.headCommitId;
+      const isSel = cm.id === state.selectedDagCommitId;
+      const ring = isSel ? '#ffffff' : (isHead ? '#f4f4f5' : col);
+      out += `
+        <g class="dag-node" data-dag-cid="${escapeHtml(cm.id)}">
+          ${isHead ? `<circle cx="${pt.x}" cy="${pt.y}" r="22" fill="${col}" fill-opacity="0.12" stroke="#f4f4f5" stroke-width="1.4" stroke-dasharray="3,3"/>` : ''}
+          <circle cx="${pt.x}" cy="${pt.y}" r="14" fill="#101218" stroke="${ring}" stroke-width="${isSel ? 3 : 2.2}"/>
+          <circle cx="${pt.x}" cy="${pt.y}" r="5.5" fill="${cm.status === 'PASS' ? '#10b981' : '#f87171'}"/>
+          <text x="${pt.x}" y="${pt.y + 30}" text-anchor="middle" fill="#ffffff" font-family="JetBrains Mono" font-size="11" font-weight="700">${escapeHtml(cm.tag)}${isHead ? ' ★' : ''}</text>
+          <text x="${pt.x}" y="${pt.y + 44}" text-anchor="middle" fill="#a1a1aa" font-family="JetBrains Mono" font-size="9">${escapeHtml(cm.note.slice(0, 20))}${cm.note.length > 20 ? '…' : ''}</text>
+        </g>`;
+    });
+    svg.innerHTML = out;
+    svg.querySelectorAll('.dag-node').forEach(n => {
+      n.addEventListener('click', () => { state.selectedDagCommitId = n.dataset.dagCid; renderBranchMap(); });
+      n.addEventListener('dblclick', () => { checkoutCommit(n.dataset.dagCid); closeBranchMap(); });
+    });
+
+    const sel = p.commits.find(x => x.id === state.selectedDagCommitId) || getActiveCommit();
+    if (!sel) return;
+    state.selectedDagCommitId = sel.id;
+    document.getElementById('dag-insp-id').textContent = sel.tag;
+    document.getElementById('dag-insp-branch').textContent = sel.branch;
+    document.getElementById('dag-insp-note').textContent = sel.note;
+    const parentTag = sel.parentId ? (p.commits.find(x => x.id === sel.parentId)?.tag || 'none') : 'ROOT';
+    document.getElementById('dag-insp-meta').textContent = `${sel.time} · parent ${parentTag} · ${sel.bounds} · ${sel.struct}`;
+    document.getElementById('dag-insp-dsl').textContent = sel.dsl || '(empty)';
+    const tw = document.getElementById('dag-insp-thumb-wrap');
+    const ti = document.getElementById('dag-insp-thumb');
+    if (sel.thumbnail) { ti.src = API.BASE + sel.thumbnail; tw.classList.remove('hidden'); }
+    else tw.classList.add('hidden');
+    const st = document.getElementById('dag-insp-status');
+    st.textContent = sel.status;
+    st.className = `font-mono text-[10px] font-bold px-2 py-0.5 rounded-full ${sel.status === 'PASS' ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/40' : 'bg-red-950/80 text-red-300 border border-red-500/40'}`;
+    document.getElementById('dag-merge-btn').classList.toggle('hidden', sel.branch === 'main');
+  }
+
+  /* =====================================================================
+   * L. DIFF
+   * ===================================================================== */
+  function populateDiffSelectors(forceBase = null, forceHead = null) {
+    const p = getActiveProject(); if (!p) return;
+    const base = document.getElementById('diff-base-select');
+    const head = document.getElementById('diff-head-select');
+    const opts = p.commits.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.tag)} (${escapeHtml(c.branch)})</option>`).join('');
+    base.innerHTML = opts; head.innerHTML = opts;
+    const h = forceHead || p.headCommitId;
+    const hObj = p.commits.find(c => c.id === h);
+    base.value = forceBase || (hObj && hObj.parentId) || p.commits[0].id;
+    head.value = h;
+    renderDiff();
+  }
+
+  function renderDiff() {
+    const p = getActiveProject(); if (!p) return;
+    const a = p.commits.find(c => c.id === document.getElementById('diff-base-select').value);
+    const b = p.commits.find(c => c.id === document.getElementById('diff-head-select').value);
+    const slot = document.getElementById('diff-output-slot');
+    if (!a || !b) { slot.innerHTML = ''; return; }
+    const la = (a.dsl || '').split('\n'), lb = (b.dsl || '').split('\n');
+    let html = '', adds = 0, dels = 0;
+    for (let i = 0; i < Math.max(la.length, lb.length); i++) {
+      const x = la[i], y = lb[i];
+      if (x === y) html += `<div class="px-2 py-0.5 text-zinc-500">&nbsp;&nbsp;${escapeHtml(x || '')}</div>`;
+      else {
+        if (x !== undefined) { html += `<div class="px-2 py-0.5 rounded bg-red-950/40 text-red-300">- ${escapeHtml(x)}</div>`; dels++; }
+        if (y !== undefined) { html += `<div class="px-2 py-0.5 rounded bg-emerald-950/40 text-emerald-300">+ ${escapeHtml(y)}</div>`; adds++; }
+      }
+    }
+    slot.innerHTML = `<div class="flex items-center gap-3 pb-2 mb-2 border-b border-white/10 font-mono text-[9px]">
+        <span class="text-emerald-400">+${adds}</span><span class="text-red-400">-${dels}</span>
+        <span class="text-zinc-500">${escapeHtml(a.tag)} → ${escapeHtml(b.tag)}</span></div>${html}`;
+  }
+  document.getElementById('diff-base-select').addEventListener('change', renderDiff);
+  document.getElementById('diff-head-select').addEventListener('change', renderDiff);
+
+  /* =====================================================================
+   * M. COMPILE — the real compiler runs server-side
+   * ===================================================================== */
+  async function compileAndCommit(rawText, note = '') {
+    const p = getActiveProject(); if (!p) return;
+    if (!rawText || !rawText.trim()) {
+      toast('EMPTY CASSETTE', 'Paste the model\'s reply into Step 2 first.', 'warn');
+      return;
+    }
+    if (!requireServer()) return;
+
+    const btn = document.getElementById('compile-btn');
+    btn.disabled = true;
+    try {
+      const boot = await apiCall('/api/compile', {
+        method: 'POST',
+        body: JSON.stringify({
+          projectId: p.id,
+          rawAiResponse: rawText,
+          userPrompt: state.lastInstruction || '',
+          engineeredPrompt: state.promptText || '',
+          mode: state.activeMode,
+          note: note || state.lastInstruction.slice(0, 52) || 'Compiled revision',
+          autoFork: document.getElementById('toggle-autofork').checked,
+          thumbnail: captureThumbnail(),
+        }),
+      });
+      applyBootstrapState(boot);
+      const np = getActiveProject(); const hc = getActiveCommit();
+      state.selectedDagCommitId = hc.id;
+      document.getElementById('ai-cassette-input').value = '';
+      document.getElementById('commit-note-input').value = '';
+      renderAll(); await rebuildStage(); await refreshPromptPreview();
+      if (hc.status === 'PASS') {
+        toast('COMPILED & SAVED', `${np.name} → ${hc.tag} on ${np.activeBranch} · ${hc.struct}`, 'ok');
+      } else {
+        toast('COMPILE FAILED', `${hc.errors} error(s) — open the REPORT tab, then use FIX ERR mode.`, 'err');
+        switchRightTab('report');
+      }
+    } catch (err) {
+      toast('COMPILE ERROR', err.message, 'err');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  /* =====================================================================
+   * N. UI WIRING
+   * ===================================================================== */
+  document.getElementById('min-left-pod').addEventListener('click', () => pods.toggle('left'));
+  document.getElementById('left-pod-collapsed').addEventListener('click', () => pods.toggle('left'));
+  document.getElementById('min-right-slab').addEventListener('click', () => pods.toggle('right'));
+  document.getElementById('right-slab-collapsed').addEventListener('click', () => pods.toggle('right'));
+
+  function setOrthoCollapsed(hidden, silent = false) {
+    document.getElementById('ortho-blueprint-content').classList.toggle('hidden', hidden);
+    const col = document.getElementById('ortho-blueprint-collapsed');
+    col.classList.toggle('hidden', !hidden);
+    col.classList.toggle('flex', hidden);
+    const dot = document.getElementById('ortho-status-dot');
+    dot.classList.toggle('bg-emerald-400', !hidden);
+    dot.classList.toggle('bg-zinc-500', hidden);
+    if (!silent) syncSettings({ orthoCollapsed: hidden });
+  }
+  const toggleOrtho = () => setOrthoCollapsed(!document.getElementById('ortho-blueprint-content').classList.contains('hidden'));
+  document.getElementById('min-ortho-btn').addEventListener('click', toggleOrtho);
+  document.getElementById('ortho-blueprint-collapsed').addEventListener('click', toggleOrtho);
+  document.getElementById('toggle-2d-ortho-btn').addEventListener('click', toggleOrtho);
+
+  function setDockCollapsed(hidden, silent = false) {
+    document.getElementById('bottom-dock-content').classList.toggle('hidden', hidden);
+    const col = document.getElementById('bottom-dock-collapsed');
+    col.classList.toggle('hidden', !hidden);
+    col.classList.toggle('flex', hidden);
+    if (!silent) syncSettings({ dockCollapsed: hidden });
+  }
+  const toggleDock = () => setDockCollapsed(!document.getElementById('bottom-dock-content').classList.contains('hidden'));
+  document.getElementById('min-bottom-dock').addEventListener('click', toggleDock);
+  document.getElementById('bottom-dock-collapsed').addEventListener('click', toggleDock);
+
+  function switchRightTab(tab, silent = false) {
+    state.activeRightTab = tab;
+    document.querySelectorAll('.right-tab-btn').forEach(b => {
+      const on = b.dataset.tab === tab;
+      b.className = `right-tab-btn flex-1 py-1 px-1.5 rounded-full font-mono text-[9px] tactile-btn ${on ? 'font-semibold bg-white/15 text-white border border-white/20' : 'font-medium text-zinc-400 hover:text-zinc-200'}`;
+    });
+    document.querySelectorAll('.right-tab-panel').forEach(p => {
+      const on = p.dataset.panel === tab;
+      p.classList.toggle('hidden', !on);
+      p.classList.toggle('flex', on);
+    });
+    if (tab === 'diff') renderDiff();
+    if (tab === 'history') renderChatHistory();
+    if (!silent) syncSettings({ activeRightTab: tab });
+  }
+  document.querySelectorAll('.right-tab-btn').forEach(b => b.addEventListener('click', () => switchRightTab(b.dataset.tab)));
+
+  document.querySelectorAll('.mode-switch-btn').forEach(b => b.addEventListener('click', async () => {
+    state.activeMode = b.dataset.mode;
+    syncSettings({ activeMode: state.activeMode });
+    renderAll(); await refreshPromptPreview();
+    toast('MODE SWITCHED', `Now in ${b.dataset.mode.replace('_', ' ').toUpperCase()} mode`);
+  }));
+  document.getElementById('toggle-autofork').addEventListener('change', e => syncSettings({ autoFork: e.target.checked }));
+  document.getElementById('ctx-include-report').addEventListener('change', async e => { syncSettings({ includeReport: e.target.checked }); await refreshPromptPreview(); });
+  document.getElementById('ctx-full-dsl').addEventListener('change', async e => { syncSettings({ fullDslSpec: e.target.checked }); await refreshPromptPreview(); });
+
+  document.getElementById('toggle-dsl-btn').addEventListener('click', () => {
+    const well = document.getElementById('prompt-peek-well');
+    const hidden = well.classList.toggle('hidden');
+    document.getElementById('dsl-toggle-label').textContent = hidden ? 'PEEK PROMPT' : 'HIDE PROMPT';
+  });
+  document.getElementById('copy-dsl-btn').addEventListener('click', async () => {
+    const text = state.promptText || await buildEngineeredPrompt();
+    try { await navigator.clipboard.writeText(text); } catch {}
+    toast('PROMPT COPIED', `${text.length.toLocaleString()} chars — paste into your AI, then drop the reply in Step 2`, 'ok');
+  });
+
+  document.getElementById('run-llm-btn').addEventListener('click', async () => {
+    if (!requireServer()) return;
+    if (!state.settings.llmEnabled || !state.settings.llmEndpoint) {
+      openSettings();
+      toast('CONFIGURE RELAY', 'Enable the relay and set your Ollama / OpenAI / Gemini endpoint first', 'warn');
+      return;
+    }
+    const btn = document.getElementById('run-llm-btn');
+    const lbl = document.getElementById('run-llm-label');
+    btn.disabled = true; lbl.textContent = 'RUNNING…';
+    try {
+      const prompt = state.promptText || await buildEngineeredPrompt();
+      const r = await apiCall('/api/llm/run', { method: 'POST', body: JSON.stringify({ prompt }) });
+      const raw = r.rawAiResponse || '';
+      document.getElementById('ai-cassette-input').value = raw;
+      toast('RESPONSE RECEIVED', `${raw.length.toLocaleString()} chars loaded into Step 2`, 'ok');
+      if (state.settings.llmAutoCompile && raw.trim()) {
+        await compileAndCommit(raw, document.getElementById('commit-note-input').value.trim());
+      }
+    } catch (err) { toast('RELAY ERROR', err.message, 'err'); }
+    finally { btn.disabled = false; lbl.textContent = 'RUN AI'; }
+  });
+
+  async function applyPromptBuild() {
+    const inp = document.getElementById('prompt-input');
+    if (inp.value.trim()) state.lastInstruction = inp.value.trim();
+    inp.value = '';
+    renderAll();
+    await refreshPromptPreview();
+    const well = document.getElementById('prompt-peek-well');
+    well.classList.remove('hidden');
+    document.getElementById('dsl-toggle-label').textContent = 'HIDE PROMPT';
+    toast('PROMPT COMPILED', API.LIVE ? 'Full grammar and reasoning ladder included — ready to copy' : 'Offline fallback only — start the server for the real prompt', API.LIVE ? 'ok' : 'warn');
+  }
+  document.getElementById('build-prompt-btn').addEventListener('click', applyPromptBuild);
+  document.getElementById('prompt-input').addEventListener('keydown', e => { if (e.key === 'Enter') applyPromptBuild(); });
+
+  document.getElementById('paste-clipboard-btn').addEventListener('click', async () => {
+    try {
+      document.getElementById('ai-cassette-input').value = await navigator.clipboard.readText();
+      toast('PASTED', 'Ready to compile');
+    } catch { toast('CLIPBOARD BLOCKED', 'Use Ctrl+V inside the response box', 'warn'); }
+  });
+  document.getElementById('paste-sample-btn').addEventListener('click', () => {
+    const p = getActiveProject(); if (!p) return;
+    const samples = {
+      model: `Here is the revision with a heavier torso and a visor:\n<<<DESIGN\nmodel "${p.name}"\nbone torso pivot=(0,0,0)\n  box from=(-6,10,-4) to=(6,24,4) color=#2d323f\nbone head pivot=(0,24,0) parent=torso\n  box from=(-4,24,-4) to=(4,32,4) color=#1e222b\n  box from=(-4,27,-4.5) to=(4,29,-4) color=#ef4444\nbone left_arm pivot=(-6,23,0) parent=torso\n  box from=(-9,4,-2) to=(-6,23,2) color=#1e222b\nbone right_arm pivot=(6,23,0) parent=torso\n  box from=(6,4,-2) to=(9,23,2) color=#1e222b\n>>>`,
+      prop: `Thicker wall and a taller body:\n<<<DESIGN\ndesign "${p.name}" units=mm\n\nprofile shell\n  path (0,0) (24,0) (24,60) (24-$wall.thick,60) (24-$wall.thick,$wall.thick) (0,$wall.thick)\n\nsolid body from=shell revolve segments=64\n\nassembly\n  part body at=(0,0,0)\n>>>`,
+      texture: `More pitting and stronger veins:\n<<<DESIGN\ntexture "${p.name}" size=16 metallic=0.6 roughness=0.75\nfill color=#52525b\nnoise dark=#3f3f466a light=#71717a6a scale=3 amount=0.55\nscatter color=#9a3412 amount=0.28 seed=4\nveins color=#b45309 scale=4 amount=0.18 seed=7\nbevel light=0.12 dark=0.2\noutline color=#27272a\n>>>`,
+    };
+    document.getElementById('ai-cassette-input').value = samples[p.track] || samples.model;
+    document.getElementById('commit-note-input').value = 'Sample revision';
+    toast('SAMPLE LOADED', 'Valid grammar for this track — press COMPILE');
+  });
+  document.getElementById('compile-btn').addEventListener('click', () =>
+    compileAndCommit(document.getElementById('ai-cassette-input').value, document.getElementById('commit-note-input').value.trim()));
+
+  document.getElementById('copy-raw-dsl-btn').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(document.getElementById('direct-dsl-editor').value); } catch {}
+    toast('SOURCE COPIED', 'Active document copied');
+  });
+  document.getElementById('recompile-direct-dsl-btn').addEventListener('click', () => {
+    compileAndCommit(document.getElementById('direct-dsl-editor').value, 'Manual source edit');
+    switchRightTab('workbench');
+  });
+  document.getElementById('send-report-to-fix-btn').addEventListener('click', async () => {
+    state.activeMode = 'fix';
+    syncSettings({ activeMode: 'fix' });
+    switchRightTab('workbench');
+    renderAll(); await refreshPromptPreview();
+    document.getElementById('prompt-peek-well').classList.remove('hidden');
+    document.getElementById('dsl-toggle-label').textContent = 'HIDE PROMPT';
+    toast('FIX PROMPT READY', 'The compiler diagnostics are attached to Step 1', 'ok');
+  });
+
+  // Exports
+  function triggerExport(fmt) {
+    const p = getActiveProject(); const c = getActiveCommit();
+    if (!p || !c || !requireServer()) return;
+    if (fmt !== 'repo' && c.status !== 'PASS') {
+      toast('NOTHING TO EXPORT', 'This revision does not compile. Fix the errors first — a broken design has no valid asset.', 'warn');
+      return;
+    }
+    const url = fmt === 'repo'
+      ? `${API.BASE}/api/export/${encodeURIComponent(p.id)}/repo.zip`
+      : `${API.BASE}/api/export/${encodeURIComponent(p.id)}/${encodeURIComponent(c.id)}/${encodeURIComponent(fmt)}`;
+    const a = document.createElement('a');
+    a.href = url; a.download = '';
+    document.body.appendChild(a); a.click(); a.remove();
+    toast(fmt === 'repo' ? 'DOWNLOADING REPOSITORY' : `EXPORTING ${fmt.toUpperCase()}`,
+      fmt === 'repo' ? `${p.name} — every revision` : `${p.name}@${c.tag}`, 'ok');
+  }
+  document.querySelectorAll('.export-btn').forEach(b => b.addEventListener('click', () => triggerExport(b.dataset.format)));
+
+  // Branch map modal
+  const dagModal = document.getElementById('branch-map-modal');
+  function openBranchMap() {
+    if (!getActiveProject()) return;
+    state.selectedDagCommitId = getActiveProject().headCommitId;
+    dagModal.classList.remove('hidden'); dagModal.classList.add('flex');
+    renderBranchMap();
+  }
+  function closeBranchMap() { dagModal.classList.add('hidden'); dagModal.classList.remove('flex'); }
+  document.getElementById('open-branch-graph-btn').addEventListener('click', openBranchMap);
+  document.getElementById('top-branch-map-btn').addEventListener('click', openBranchMap);
+  document.getElementById('left-open-map-btn').addEventListener('click', openBranchMap);
+  document.getElementById('close-branch-map-btn').addEventListener('click', closeBranchMap);
+  dagModal.addEventListener('click', e => { if (e.target === dagModal) closeBranchMap(); });
+  document.getElementById('quick-fork-btn').addEventListener('click', () => { const c = getActiveCommit(); if (c) promptFork(c.id); });
+  document.getElementById('dag-new-branch-btn').addEventListener('click', () => promptFork(state.selectedDagCommitId));
+  document.getElementById('dag-checkout-btn').addEventListener('click', () => { checkoutCommit(state.selectedDagCommitId); closeBranchMap(); });
+  document.getElementById('dag-edit-from-btn').addEventListener('click', async () => {
+    await checkoutCommit(state.selectedDagCommitId, true);
+    state.activeMode = 'edit'; syncSettings({ activeMode: 'edit' });
+    switchRightTab('workbench'); renderAll(); await refreshPromptPreview();
+    closeBranchMap();
+  });
+  document.getElementById('dag-diff-btn').addEventListener('click', () => {
+    const head = getActiveProject().headCommitId;
+    closeBranchMap(); switchRightTab('diff');
+    populateDiffSelectors(state.selectedDagCommitId, head);
+  });
+  document.getElementById('dag-merge-btn').addEventListener('click', () => {
+    const sel = getActiveProject().commits.find(c => c.id === state.selectedDagCommitId);
+    if (sel) mergeIntoMain(sel);
+  });
+
+  // New asset modal
+  const newModal = document.getElementById('new-design-modal');
+  function markTrackCards() {
+    document.querySelectorAll('.new-track-card').forEach(c => {
+      c.classList.toggle('glass-card-active', c.dataset.track === state.newDesignTrack);
+    });
+  }
+  function openNewDesign() {
+    newModal.classList.remove('hidden'); newModal.classList.add('flex');
+    markTrackCards();
+    document.getElementById('new-design-name').focus();
+  }
+  function closeNewDesign() { newModal.classList.add('hidden'); newModal.classList.remove('flex'); }
+  document.getElementById('new-design-btn').addEventListener('click', openNewDesign);
+  document.getElementById('left-new-design-btn').addEventListener('click', openNewDesign);
+  document.getElementById('close-new-design-btn').addEventListener('click', closeNewDesign);
+  document.getElementById('cancel-new-design-btn').addEventListener('click', closeNewDesign);
+  newModal.addEventListener('click', e => { if (e.target === newModal) closeNewDesign(); });
+  document.querySelectorAll('.new-track-card').forEach(card =>
+    card.addEventListener('click', () => { state.newDesignTrack = card.dataset.track; markTrackCards(); }));
+
+  document.getElementById('confirm-new-design-btn').addEventListener('click', async () => {
+    if (!requireServer()) return;
+    const rawName = document.getElementById('new-design-name').value.trim() || `asset_${Object.keys(state.projects).length + 1}`;
+    const brief = document.getElementById('new-design-prompt').value.trim() || `Create a clean ${state.newDesignTrack} asset named ${rawName}`;
+    try {
+      const boot = await apiCall('/api/projects', {
+        method: 'POST', body: JSON.stringify({ name: rawName, track: state.newDesignTrack, brief }),
+      });
+      state.activeMode = 'new_take';
+      state.lastInstruction = brief;
+      state.branchFilter = 'ALL';
+      document.getElementById('new-design-name').value = '';
+      document.getElementById('new-design-prompt').value = '';
+      closeNewDesign();
+      switchRightTab('workbench');
+      await afterMutation(boot, 'ASSET CREATED', `${getActiveProject().name} started on main — copy the Step 1 prompt`);
+      document.getElementById('prompt-peek-well').classList.remove('hidden');
+      document.getElementById('dsl-toggle-label').textContent = 'HIDE PROMPT';
+    } catch (err) { toast('CREATE FAILED', err.message, 'err'); }
+  });
+
+  // Settings modal
+  const setModal = document.getElementById('settings-modal');
+  const PROVIDERS = {
+    ollama: { endpoint: 'http://127.0.0.1:11434/v1/chat/completions', model: 'qwen2.5-coder:7b' },
+    openai: { endpoint: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini' },
+    gemini: { endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent', model: 'gemini-2.5-flash' },
+  };
+  function fillSettings() {
+    const s = state.settings;
+    document.getElementById('set-llm-enabled').checked = !!s.llmEnabled;
+    document.getElementById('set-llm-autocompile').checked = s.llmAutoCompile !== false;
+    document.getElementById('set-llm-provider').value = s.llmProvider || 'ollama';
+    document.getElementById('set-llm-model').value = s.llmModel || '';
+    document.getElementById('set-llm-endpoint').value = s.llmEndpoint || '';
+    document.getElementById('set-llm-apikey').value = s.llmApiKey || '';
+    updateEngineBadge();
+  }
+  function openSettings() { fillSettings(); setModal.classList.remove('hidden'); setModal.classList.add('flex'); }
+  function closeSettings() { setModal.classList.add('hidden'); setModal.classList.remove('flex'); }
+  document.getElementById('open-settings-btn').addEventListener('click', openSettings);
+  document.getElementById('engine-status-pill').addEventListener('click', openSettings);
+  document.getElementById('close-settings-btn').addEventListener('click', closeSettings);
+  document.getElementById('cancel-settings-btn').addEventListener('click', closeSettings);
+  setModal.addEventListener('click', e => { if (e.target === setModal) closeSettings(); });
+  document.getElementById('set-llm-provider').addEventListener('change', e => {
+    const d = PROVIDERS[e.target.value];
+    if (d) {
+      document.getElementById('set-llm-endpoint').value = d.endpoint;
+      document.getElementById('set-llm-model').value = d.model;
+    }
+  });
+  document.getElementById('save-settings-btn').addEventListener('click', () => {
+    syncSettings({
+      llmEnabled: document.getElementById('set-llm-enabled').checked,
+      llmAutoCompile: document.getElementById('set-llm-autocompile').checked,
+      llmProvider: document.getElementById('set-llm-provider').value,
+      llmModel: document.getElementById('set-llm-model').value.trim(),
+      llmEndpoint: document.getElementById('set-llm-endpoint').value.trim(),
+      llmApiKey: document.getElementById('set-llm-apikey').value.trim(),
+    }, true);
+    closeSettings();
+    toast('SETTINGS SAVED', API.LIVE ? 'Written to the local SQLite store' : 'Session only — no server connected', API.LIVE ? 'ok' : 'warn');
+  });
+  document.getElementById('settings-refresh-btn').addEventListener('click', async () => {
+    const ok = await boot();
+    if (ok) { fillSettings(); toast('SYNCED', 'Reloaded assets and settings from the server', 'ok'); }
+    else toast('OFFLINE', 'Could not reach studio_server.py', 'err');
+  });
+
+  // Command palette
+  const cmdModal = document.getElementById('cmd-palette-modal');
+  const cmdInput = document.getElementById('cmd-palette-input');
+  const cmdList = document.getElementById('cmd-palette-list');
+  function commands() {
+    const p = getActiveProject();
+    const base = [
+      { label: 'New asset', kbd: 'N', icon: 'add_box', run: openNewDesign },
+      { label: 'Open branch map', kbd: 'B', icon: 'hub', run: openBranchMap },
+      { label: 'Studio settings & LLM relay', kbd: ',', icon: 'tune', run: openSettings },
+      { label: 'Compile the pasted response', kbd: '', icon: 'play_circle', run: () => document.getElementById('compile-btn').click() },
+      { label: 'Copy the compiled prompt', kbd: '', icon: 'content_copy', run: () => document.getElementById('copy-dsl-btn').click() },
+      { label: 'Export revision bundle (.zip)', kbd: '', icon: 'archive', run: () => triggerExport('zip') },
+      { label: 'Export whole repository (.zip)', kbd: '', icon: 'folder_zip', run: () => triggerExport('repo') },
+      { label: 'Mode → EDIT', kbd: '', icon: 'edit_note', run: () => document.querySelector('[data-mode="edit"]').click() },
+      { label: 'Mode → NEW TAKE', kbd: '', icon: 'auto_awesome', run: () => document.querySelector('[data-mode="new_take"]').click() },
+      { label: 'Mode → FIX ERRORS', kbd: '', icon: 'build', run: () => document.querySelector('[data-mode="fix"]').click() },
+      { label: 'View compiler report', kbd: '', icon: 'assignment', run: () => switchRightTab('report') },
+      { label: 'Compare revisions', kbd: '', icon: 'difference', run: () => switchRightTab('diff') },
+      { label: 'View prompt history', kbd: '', icon: 'history', run: () => switchRightTab('history') },
+      { label: 'Toggle 2D blueprints', kbd: '', icon: 'square_foot', run: toggleOrtho },
+      { label: 'Toggle left pod', kbd: '[', icon: 'dock_to_right', run: () => pods.toggle('left') },
+      { label: 'Toggle right pod', kbd: ']', icon: 'dock_to_left', run: () => pods.toggle('right') },
+    ];
+    Object.values(state.projects).forEach(x => base.push({
+      label: `Open asset → ${x.name} (${x.track})`, kbd: '', icon: x.icon || 'view_in_ar',
+      run: () => {
+        state.activeProjectId = x.id; syncSettings({ activeProjectId: x.id });
+        renderAll(); rebuildStage(); refreshPromptPreview();
+      },
+    }));
+    if (p) Object.keys(p.branches).forEach(bn => base.push({
+      label: `Checkout branch → ${bn}`, kbd: '', icon: 'account_tree',
+      run: () => checkoutCommit(p.branches[bn].head),
+    }));
+    return base;
+  }
+  function renderCmd() {
+    const q = cmdInput.value.trim().toLowerCase();
+    const items = commands().filter(c => c.label.toLowerCase().includes(q));
+    cmdList.innerHTML = items.map((c, i) => `
+      <button class="cmd-item w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-white/[0.08] font-mono text-[11px] text-zinc-200 hover:text-white text-left transition-colors" data-idx="${i}">
+        <span class="flex items-center gap-2.5"><span class="material-symbols-outlined text-[15px] text-zinc-400">${escapeHtml(c.icon)}</span>${escapeHtml(c.label)}</span>
+        ${c.kbd ? `<kbd class="px-1.5 py-0.5 rounded bg-white/10 text-[9px] text-zinc-400">${escapeHtml(c.kbd)}</kbd>` : ''}
+      </button>`).join('') || `<div class="px-3 py-4 font-mono text-[10px] text-zinc-500 text-center">No matching command</div>`;
+    cmdList.querySelectorAll('.cmd-item').forEach((el, i) =>
+      el.addEventListener('click', () => { closeCmd(); items[i].run(); }));
+  }
+  function openCmd() { cmdModal.classList.remove('hidden'); cmdModal.classList.add('flex'); cmdInput.value = ''; renderCmd(); cmdInput.focus(); }
+  function closeCmd() { cmdModal.classList.add('hidden'); cmdModal.classList.remove('flex'); }
+  document.getElementById('cmd-k-btn').addEventListener('click', openCmd);
+  cmdInput.addEventListener('input', renderCmd);
+  cmdModal.addEventListener('click', e => { if (e.target === cmdModal) closeCmd(); });
+
+  document.getElementById('brand-home-btn').addEventListener('click', () => {
+    toast('DESIGNBRIDGE STUDIO', API.LIVE
+      ? `${API.engine === 'DESIGNBRIDGE_CORE' ? 'Real compiler active' : 'SQLite only — designbridge.py missing'} · ${Object.keys(state.projects).length} asset(s)`
+      : 'No server connected');
+  });
+
+  // Keyboard shortcuts
+  window.addEventListener('keydown', e => {
+    const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openCmd(); return; }
+    if (e.key === 'Escape') { closeCmd(); closeBranchMap(); closeNewDesign(); closeSettings(); return; }
+    if (typing) return;
+    const k = e.key.toLowerCase();
+    if (k === 'b') openBranchMap();
+    else if (k === 'n') openNewDesign();
+    else if (k === ',') openSettings();
+    else if (k === '[') pods.toggle('left');
+    else if (k === ']') pods.toggle('right');
+    else if (k === 'w') document.getElementById('cam-wireframe').click();
+    else if (k === 'r') document.getElementById('cam-autorotate').click();
+    else if (k === ' ') { e.preventDefault(); isPlaying = !isPlaying; updatePlayIcon(); }
+    else if (k === '1') { state.settings.cameraPreset = 'iso'; setCameraPreset('iso'); }
+    else if (k === '2') { state.settings.cameraPreset = 'front'; setCameraPreset('front'); }
+    else if (k === '3') { state.settings.cameraPreset = 'side'; setCameraPreset('side'); }
+    else if (k === '4') { state.settings.cameraPreset = 'top'; setCameraPreset('top'); }
+  });
+
+  /* =====================================================================
+   * O. BOOT
+   * ===================================================================== */
+  async function boot() {
+    try {
+      const b = await apiCall('/api/bootstrap', { method: 'GET' }, true);
+      if (b && b.ok && b.projects) {
+        applyBootstrapState(b, true);
+        renderAll();
+        await rebuildStage();
+        await refreshPromptPreview();
+        if (API.engine !== 'DESIGNBRIDGE_CORE') {
+          toast('COMPILER MISSING', 'designbridge.py was not importable — put it next to studio_server.py and restart.', 'warn');
+        }
+        return true;
+      }
+    } catch (err) {
+      console.info('studio_server.py unreachable:', err.message);
+    }
+    API.LIVE = false;
+    updateEngineBadge();
+    renderAll();
+    await rebuildStage();
+    document.getElementById('project-list-slot').innerHTML =
+      `<div class="p-3 rounded-xl recessed-well font-mono text-[10px] text-red-300/90 leading-relaxed">
+         <div class="font-bold mb-1">NO SERVER</div>
+         Start the backend, then reload:<br/>
+         <span class="text-zinc-300">python3 studio_server.py</span>
+       </div>`;
+    toast('NO SERVER', 'Run: python3 studio_server.py — the Studio has no compiler without it.', 'err');
+    return false;
+  }
+
+  window.addEventListener('resize', () => {}, { once: true });
+  updateScrubberUI();
+  updatePlayIcon();
+  markTrackCards();
+  setCameraPreset('iso', true);
+  boot();
+})();
+</script>
+</body>
+</html>

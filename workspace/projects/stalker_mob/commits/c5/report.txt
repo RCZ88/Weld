@@ -1,0 +1,2 @@
+PASS: Amber optical emitter compiled (#f59e0b).
+Zero geometry regressions from v3.

@@ -1,0 +1,22 @@
+{
+  "id": "c3",
+  "tag": "v3",
+  "branch": "main",
+  "parentId": "c2",
+  "mergeParentId": null,
+  "time": "14:22",
+  "status": "PASS",
+  "note": "Extended arms past knees + glowing crimson visor",
+  "bounds": "16\u00d732\u00d76",
+  "struct": "6B \u00b7 7BX",
+  "anim": "lunge",
+  "errors": 0,
+  "params": {
+    "armLen": 10.6,
+    "visorColor": 15680580,
+    "torsoW": 4.4,
+    "hasVisor": true
+  },
+  "report": "PASS: 0 errors, 0 warnings.\nWatertight check: VERIFIED.\nEmissive visor channel bound (#ef4444).\nAnimation \"lunge\" (0.50s loop) compiled cleanly.",
+  "dsl": "<<<DESIGN model=\"stalker\" box=(16,32,6)\nbone torso pivot=(0,16,0) box=(9,14,6)\nbone head pivot=(0,32,0) box=(8,8,8) [attach=visor color=#ef4444]\nbone left_arm pivot=(-8,30,0) box=(4,30,4) // extended\nbone right_arm pivot=(8,30,0) box=(4,30,4) // extended\nanim lunge duration=0.50 loop=true\n>>>"
+}

@@ -1,0 +1,1 @@
+PASS: Seamless PBR stack verified. Roughness variance 0.42–0.91.

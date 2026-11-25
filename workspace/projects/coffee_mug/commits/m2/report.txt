@@ -1,0 +1,1 @@
+PASS: Manifold verified. Chamfer radius 1.5mm print-safe.

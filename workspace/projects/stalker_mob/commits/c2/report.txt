@@ -1,0 +1,3 @@
+PASS: 0 errors, 0 warnings.
+Watertight check: VERIFIED (0 non-manifold edges).
+Rig hierarchy: 6 bones validated.

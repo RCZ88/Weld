@@ -1,0 +1,1 @@
+PASS: Watertight CAD solid. Wall thickness 4.0mm >= 2.0mm min.

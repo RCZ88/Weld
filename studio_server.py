@@ -120,6 +120,10 @@ DEFAULT_SETTINGS = {
     "llmAutoCompile": True,
     # Per-asset shape budgets: {projectId: {complexity, symmetry, ...}}
     "styles": {},
+    # Standing art direction, shared by every asset, plus named presets
+    "styleLock": "",
+    "styleLockOn": True,
+    "styleLockPresets": {},
 }
 
 # ----------------------------------------------------------------------
@@ -744,16 +748,23 @@ class StudioStorage:
             cols = [r["name"] for r in conn.execute("PRAGMA table_info(commits)").fetchall()]
             if "thumbnail" not in cols:
                 conn.execute("ALTER TABLE commits ADD COLUMN thumbnail TEXT NOT NULL DEFAULT ''")
+            # Folders arrived later; add the column to existing workspaces
+            # rather than asking anyone to start over.
+            pcols = [r["name"] for r in conn.execute("PRAGMA table_info(projects)").fetchall()]
+            if "folder" not in pcols:
+                conn.execute("ALTER TABLE projects ADD COLUMN folder TEXT NOT NULL DEFAULT ''")
 
-    def _seed_if_empty(self):
+    def _seed_if_empty(self, force=False, only=None):
         with self._connect() as conn:
             row = conn.execute("SELECT COUNT(*) AS cnt FROM projects").fetchone()
-            if row["cnt"] > 0:
+            if row["cnt"] > 0 and not force:
                 self._ensure_default_settings(conn)
                 return
 
             ts = now_iso()
             for pid, p in SEED_PROJECTS.items():
+                if only is not None and pid not in only:
+                    continue
                 conn.execute(
                     """INSERT INTO projects (id, name, track, icon, active_branch, head_commit_id, created_at, updated_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -806,6 +817,113 @@ class StudioStorage:
 
         for pid in SEED_PROJECTS:
             self._write_project_manifest(pid)
+
+    # ------------------------------------------------------------------
+    # REPAIR / MIGRATION
+    # ------------------------------------------------------------------
+    def audit(self) -> dict:
+        """Recompile every stored revision and report which ones are lying.
+
+        A workspace created by an earlier build keeps whatever that build
+        wrote, because seeding is skipped on a non-empty database. Earlier
+        builds stamped a hardcoded "PASS: Compiled cleanly" on revisions whose
+        source the real compiler rejects outright. This finds them without
+        changing anything.
+        """
+        bad, ok = [], 0
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, project_id, tag, status, dsl FROM commits ORDER BY project_id, seq"
+            ).fetchall()
+        for r in rows:
+            try:
+                res = compile_source(r["dsl"])
+                truth, errs = res.status, res.errors
+            except Exception as exc:
+                truth, errs = "FAIL", 1
+                res = None
+            if truth != r["status"] or (truth == "FAIL" and r["status"] == "PASS"):
+                bad.append({"project": r["project_id"], "commit": r["id"], "tag": r["tag"],
+                            "stored": r["status"], "actual": truth, "errors": errs})
+            else:
+                ok += 1
+        return {"total": len(rows), "agree": ok, "mismatched": bad}
+
+    def repair(self, verbose=True) -> dict:
+        """Rewrite every revision's verdict to what the compiler actually says.
+
+        Only the derived columns change - status, errors, report, bounds,
+        struct, anim. The source text, the notes, the branch graph and the
+        prompt history are never touched, so no work is lost. A revision that
+        genuinely does not compile is marked FAIL with its real diagnostics,
+        which is the honest state: it was always broken, it was just labelled
+        PASS.
+        """
+        fixed, failed, intact = 0, 0, 0
+        with self._connect() as conn:
+            rows = conn.execute("SELECT id, project_id, tag, status, dsl FROM commits").fetchall()
+            for r in rows:
+                try:
+                    res = compile_source(r["dsl"])
+                    status, report = res.status, res.report
+                    errors, bounds, struct, anim = res.errors, res.bounds, res.struct, res.anim
+                except Exception as exc:
+                    status, errors = "FAIL", 1
+                    bounds, struct, anim = "-", "-", "static"
+                    report = ("STATUS: FAIL   1 error(s)\n\nERRORS\n"
+                              f"  [ERROR] input: {exc}\n"
+                              "          FIX: this revision predates the current grammar. Open the\n"
+                              "               SOURCE tab, or use FIX ERR mode to have it rewritten.\n")
+                changed = (status != r["status"])
+                conn.execute(
+                    """UPDATE commits SET status=?, errors=?, report=?, bounds=?, struct=?, anim=?
+                       WHERE id=?""",
+                    (status, errors, report, bounds, struct, anim, r["id"]),
+                )
+                if status == "FAIL":
+                    failed += 1
+                    if verbose and changed:
+                        print(f"  {r['project_id']}/{r['tag']}: PASS -> FAIL (was mislabelled)")
+                elif changed:
+                    fixed += 1
+                else:
+                    intact += 1
+        return {"checked": len(rows), "now_failing": failed, "corrected": fixed, "unchanged": intact}
+
+    def replace_examples(self, verbose=True) -> dict:
+        """Swap only the built-in demo assets for current, compiling ones.
+
+        Matches on the seed ids alone, so anything the operator made is left
+        completely alone. Their revisions are deleted and rebuilt because they
+        are demo content, not work.
+        """
+        replaced, skipped = [], []
+        seed_ids = set(SEED_PROJECTS.keys())
+        with self._connect() as conn:
+            present = {r["id"] for r in conn.execute("SELECT id FROM projects").fetchall()}
+            for pid in seed_ids:
+                if pid not in present:
+                    continue
+                # Only replace if it still looks like untouched demo content:
+                # a seed asset nobody has added revisions to beyond the seeds.
+                n = conn.execute("SELECT COUNT(*) c FROM commits WHERE project_id=?", (pid,)).fetchone()["c"]
+                expected = len(SEED_PROJECTS[pid]["commits"])
+                if n > expected:
+                    skipped.append(f"{pid} (has {n} revisions, you've worked on it)")
+                    continue
+                conn.execute("DELETE FROM projects WHERE id=?", (pid,))
+                replaced.append(pid)
+        if replaced:
+            pdir_root = self.projects_dir
+            for pid in replaced:
+                shutil.rmtree(pdir_root / pid, ignore_errors=True)
+            self._seed_if_empty(force=True, only=set(replaced))
+        if verbose:
+            for p in replaced:
+                print(f"  replaced demo asset: {p}")
+            for s in skipped:
+                print(f"  kept: {s}")
+        return {"replaced": replaced, "skipped": skipped}
 
     def _ensure_default_settings(self, conn: sqlite3.Connection):
         ts = now_iso()
@@ -915,6 +1033,7 @@ class StudioStorage:
                     "name": p["name"],
                     "track": p["track"],
                     "icon": p["icon"],
+                    "folder": (p["folder"] if "folder" in p.keys() else "") or "",
                     "activeBranch": p["active_branch"],
                     "headCommitId": p["head_commit_id"],
                     "branches": branches,
@@ -1019,9 +1138,16 @@ class StudioStorage:
     # PROJECT CRUD, BRANCH, COMMIT & CHAT HISTORY MUTATIONS
     # ------------------------------------------------------------------
     def create_project(self, payload: dict) -> dict:
-        raw_name = payload.get("name") or "new_design"
-        pid = safe_slug(raw_name)
+        # The name is optional. designbridge documents carry their own name
+        # (model "stalker"), so an unnamed asset gets a placeholder now and
+        # adopts the real name from the document on first successful compile.
+        raw_name = (payload.get("name") or "").strip()
         track = payload.get("track") or "model"
+        auto_named = not raw_name
+        if auto_named:
+            raw_name = f"untitled_{track}_{uuid.uuid4().hex[:4]}"
+        pid = safe_slug(raw_name)
+        folder = (payload.get("folder") or "").strip()
         brief = (payload.get("brief") or f"Create a clean {track} asset named {pid}").strip()
         icon_map = {"model": "view_in_ar", "prop": "precision_manufacturing", "texture": "texture"}
         icon = icon_map.get(track, "view_in_ar")
@@ -1034,9 +1160,9 @@ class StudioStorage:
                 pid = f"{pid}_{uuid.uuid4().hex[:4]}"
 
             conn.execute(
-                """INSERT INTO projects (id, name, track, icon, active_branch, head_commit_id, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, 'main', ?, ?, ?)""",
-                (pid, pid, track, icon, cid, ts, ts),
+                """INSERT INTO projects (id, name, track, icon, active_branch, head_commit_id, created_at, updated_at, folder)
+                   VALUES (?, ?, ?, ?, 'main', ?, ?, ?, ?)""",
+                (pid, pid, track, icon, cid, ts, ts, folder),
             )
             conn.execute(
                 "INSERT INTO branches (project_id, name, color, head_commit_id, created_at) VALUES (?, 'main', '#d4d4d8', ?, ?)",
@@ -1086,13 +1212,17 @@ class StudioStorage:
         self._write_project_manifest(pid)
         return self.get_bootstrap_state()
 
-    def rename_project(self, project_id: str, new_name: str) -> dict:
-        clean_name = safe_slug(new_name)
+    def rename_project(self, project_id: str, new_name: str, folder=None) -> dict:
         ts = now_iso()
         with self._connect() as conn:
             if not conn.execute("SELECT 1 FROM projects WHERE id=?", (project_id,)).fetchone():
                 raise ValueError("Project not found")
-            conn.execute("UPDATE projects SET name=?, updated_at=? WHERE id=?", (clean_name, ts, project_id))
+            if new_name:
+                conn.execute("UPDATE projects SET name=?, updated_at=? WHERE id=?",
+                             (safe_slug(new_name), ts, project_id))
+            if folder is not None:
+                conn.execute("UPDATE projects SET folder=?, updated_at=? WHERE id=?",
+                             (str(folder).strip(), ts, project_id))
         self._write_project_manifest(project_id)
         return self.get_bootstrap_state()
 
@@ -1283,6 +1413,7 @@ class StudioStorage:
         user_prompt = payload.get("userPrompt", "")
         engineered_prompt = payload.get("engineeredPrompt", "")
         mode = payload.get("mode", "edit")
+        style_lock_at_compile = (payload.get("styleLock") or "").strip()
         note = (payload.get("note") or user_prompt[:52] or "Compiled AI DSL revision").strip()
         auto_fork = bool(payload.get("autoFork", False))
         thumb_data_url = payload.get("thumbnail", "")
@@ -1319,7 +1450,17 @@ class StudioStorage:
                 # they are the operator's own budget, not a compiler error.
                 style = normalize_style(payload.get("style"))
                 try:
-                    report = report.rstrip() + "\n" + style_report_block(check_style(result, style), style)
+                    issues = check_style(result, style)
+                    # Attributes the compiler quietly dropped. Reported even
+                    # when style enforcement is off, because this is not a
+                    # budget preference - it is work that silently did nothing.
+                    ghosts = check_unknown_keys(dsl)
+                    report = report.rstrip() + "\n" + style_report_block(issues, style)
+                    if ghosts:
+                        report += ("\nIGNORED ATTRIBUTES - the parser accepted these and "
+                                   "then discarded them:\n")
+                        for sev, msg, fix in ghosts:
+                            report += f"  [{sev}] {msg}\n         WHY: {fix}\n"
                 except Exception as exc:
                     report = report.rstrip() + f"\n\nSTUDIO STYLE CHECK\n  could not run: {exc}\n"
             except Exception as exc:
@@ -1371,6 +1512,23 @@ class StudioStorage:
                 (project_id, target_branch, new_id, mode, user_prompt, engineered_prompt, raw_response, dsl, ts),
             )
             self._write_commit_artifacts(project_id, commit_obj)
+
+            # An asset created without a name adopts the one the AI wrote into
+            # the document, so nobody has to invent a name before the thing
+            # exists. Only ever applied while the name is still a placeholder.
+            if status == "PASS" and str(proj["name"]).startswith("untitled_"):
+                try:
+                    doc_name = (getattr(result.doc, "name", "") or "").strip()
+                except Exception:
+                    doc_name = ""
+                if doc_name:
+                    nice = safe_slug(doc_name)
+                    taken = {r["name"] for r in conn.execute(
+                        "SELECT name FROM projects WHERE id != ?", (project_id,)).fetchall()}
+                    if nice in taken:
+                        nice = f"{nice}_{uuid.uuid4().hex[:3]}"
+                    conn.execute("UPDATE projects SET name=?, updated_at=? WHERE id=?",
+                                 (nice, ts, project_id))
 
         self._write_project_manifest(project_id)
         return self.get_bootstrap_state()
@@ -1598,8 +1756,13 @@ STYLE_DEFAULTS = {
 }
 
 # Budgets per complexity step, per track.
+# (total, per-bone). The model ceiling was far too low for a boss: a 15-bone
+# boss at complexity 5 could use 14 boxes on one bone but only 80 overall, so
+# the per-bone figure was unreachable and the total was the real cap. Totals
+# now scale with the bone count (see model_budget), and the ceiling is high
+# enough for a genuine boss.
 BUDGET = {
-    "model":   {1: (6, 2),  2: (12, 3), 3: (24, 5), 4: (40, 8), 5: (80, 14)},
+    "model":   {1: (8, 2),  2: (20, 4), 3: (48, 7), 4: (120, 12), 5: (320, 20)},
     "prop":    {1: (1, 1),  2: (2, 1),  3: (3, 2),  4: (5, 3),  5: (8, 4)},
     "texture": {1: (3, 0),  2: (4, 0),  3: (6, 0),  4: (9, 0),  5: (14, 0)},
 }
@@ -1633,16 +1796,63 @@ def normalize_style(raw) -> dict:
     return s
 
 
-def style_constraints_text(kind: str, style: dict) -> str:
+def model_budget(style: dict, bones: int = 0) -> tuple:
+    """Box budget for a model, scaled by how many bones it actually has.
+
+    A flat total punishes articulation: a 15-bone boss needs more boxes than a
+    4-bone prop at the same level of detail per part. The per-bone figure is
+    the real control; the total is a ceiling derived from it.
+    """
+    lvl = normalize_style(style)["complexity"]
+    base_total, per = BUDGET["model"][lvl]
+    if bones > 0:
+        derived = per * bones
+        return max(base_total, derived), per
+    return base_total, per
+
+
+def size_budget_note(kind: str, style: dict, brief: str) -> str:
+    """If the brief names a voxel size, say what that implies for the budget.
+
+    A target like 144x152x192 is a volume the boxes have to cover. Stating the
+    relationship stops the model from either pebble-dashing the shape with
+    tiny boxes or trying to fill it with four.
+    """
+    if kind != "model" or not brief:
+        return ""
+    m = re.search(r"(\d{2,4})\s*[x\u00d7]\s*(\d{2,4})\s*[x\u00d7]\s*(\d{2,4})", brief)
+    if not m:
+        return ""
+    dx, dy, dz = (int(g) for g in m.groups())
+    lvl = normalize_style(style)["complexity"]
+    total, per = BUDGET["model"][lvl]
+    longest = max(dx, dy, dz)
+    return (
+        f"  SIZE TARGET: the brief says {dx}x{dy}x{dz} voxels. That is the envelope the\n"
+        f"  boxes must fill, not a box count. With about {total} boxes to spend, each one\n"
+        f"  averages roughly {max(1, longest // max(4, int(total ** (1/3)) * 2))} voxels on its longest side - so build with large\n"
+        "  masses and add detail only where it reads. If you cannot cover the envelope\n"
+        "  within the budget, say so in your plan line and cover it with fewer, bigger\n"
+        "  boxes rather than silently going over.\n"
+    )
+
+
+def style_constraints_text(kind: str, style: dict, bones: int = 0, brief: str = "") -> str:
     """The style, written as limits a model can actually obey."""
     s = normalize_style(style)
     lvl = s["complexity"]
-    total, per = BUDGET.get(kind, BUDGET["model"])[lvl]
+    if kind == "model":
+        total, per = model_budget(style, bones)
+    else:
+        total, per = BUDGET.get(kind, BUDGET["model"])[lvl]
     out = [f"SHAPE BUDGET - complexity {lvl} of 5. These are limits, not suggestions."]
 
     if kind == "model":
-        out.append(f"  Use at most {total} boxes in the whole model, and at most {per} per bone.")
-        out.append("  If you need more shape than that, make the boxes smarter, not more numerous.")
+        out.append(f"  At most {per} boxes per bone. Across the whole model, at most {total}.")
+        if bones:
+            out.append(f"  (Counted against the {bones} bone(s) the current design has. Adding bones")
+            out.append("  raises the total, so articulate first and detail second.)")
+        out.append("  Spend them on masses that read, not on filler.")
     elif kind == "prop":
         out.append(f"  Use at most {total} solids and at most {per} profiles beyond the first.")
     else:
@@ -1692,6 +1902,67 @@ def _boxes_of(result) -> list:
     return out
 
 
+# Keys designbridge's box statement actually honours. Anything else is
+# parsed and then dropped on the floor with no diagnostic, which is how a
+# model can write rot=(0,45,0) or material_id=iron, be told nothing, and
+# ship an axis-aligned untextured box believing it worked.
+BOX_KEYS_HONOURED = {"from", "to", "color"}
+BONE_KEYS_HONOURED = {"parent", "pivot"}
+SILENT_KEY_HINT = {
+    "rot": "designbridge has no rotated boxes. Build the shape from axis-aligned "
+           "boxes, or rotate the whole bone with an animation key.",
+    "rotation": "same as rot - not supported on a box.",
+    "material_id": "materials are not part of the model grammar. Colour the box with "
+                   "color=#rrggbb, and bind a texture at the Studio level.",
+    "material": "see material_id.",
+    "emissive": "there is no emissive channel. A bright saturated colour is the only "
+                "way to read as glowing, and it is only a visual approximation.",
+    "emissive_channel": "see emissive.",
+    "glow": "see emissive.",
+    "socket": "sockets are not a statement. An empty bone at the socket position is "
+              "the closest thing, and it carries no semantics for the engine.",
+    "size": "boxes are defined by two corners: use from= and to=.",
+    "origin": "boxes are defined by two corners: use from= and to=.",
+    "uv": "UVs are not expressible here.",
+    "texture": "a box cannot name a texture in this grammar.",
+}
+
+
+def check_unknown_keys(dsl: str) -> list:
+    """Flag attributes the compiler will silently discard.
+
+    This is a Studio-side lint because designbridge does not warn: it parses
+    the key, finds no handler, and moves on. Silence is the dangerous part -
+    the author has no way to learn their instruction did nothing.
+    """
+    issues = []
+    seen = set()
+    for n, raw in enumerate(dsl.splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith("//"):
+            continue
+        head = line.split()[0].lower()
+        if head == "box":
+            honoured, what = BOX_KEYS_HONOURED, "box"
+        elif head == "bone":
+            honoured, what = BONE_KEYS_HONOURED, "bone"
+        else:
+            continue
+        for key in re.findall(r"(?:^|\s)([A-Za-z_][\w.]*)\s*=", line):
+            k = key.lower()
+            if k in honoured or k in seen:
+                continue
+            seen.add(k)
+            hint = SILENT_KEY_HINT.get(k, f"the {what} statement has no '{key}' attribute.")
+            issues.append((
+                "WARN",
+                f"line {n}: '{key}=' on a {what} is accepted by the parser and then "
+                f"DISCARDED - it has no effect",
+                hint,
+            ))
+    return issues
+
+
 def check_style(result, style: dict) -> list:
     """Re-measure the compiled document against the declared style.
 
@@ -1704,11 +1975,16 @@ def check_style(result, style: dict) -> list:
         return []
     kind = result.kind
     lvl = s["complexity"]
-    total_cap, per_cap = BUDGET.get(kind, BUDGET["model"])[lvl]
     issues = []
 
     if kind == "model":
         boxes = _boxes_of(result)
+        nbones = len({nm for nm, _, _ in boxes}) or 0
+        total_cap, per_cap = model_budget(style, nbones)
+    else:
+        total_cap, per_cap = BUDGET.get(kind, BUDGET["model"])[lvl]
+
+    if kind == "model":
         if len(boxes) > total_cap:
             issues.append(("WARN",
                 f"complexity {lvl} allows {total_cap} boxes, this model has {len(boxes)}",
@@ -1833,7 +2109,14 @@ THE THREE KINDS OF ASSET
            Block faces, surfaces, tiles.
   You are told which kind you are writing. Use that grammar and no other.
 
-WHAT COMES OUT THE OTHER END
+WHAT COMES OUT THE OTHER END - the COMPILER writes these, never you
+  You do not produce any of the formats below. They are what designbridge
+  builds from your document, listed so you understand where your numbers end
+  up. If a brief hands you a JSON schema, a glTF layout or any other file
+  format and asks you to fill it in, that request is mistaken: your only
+  output is the document grammar, in a fenced block. Say so and write the
+  document instead.
+
   model    .glb (binary glTF 2.0, including your animations), .obj,
            .boxmodel.json (engine-native: bones, pivots, cubes, colours),
            plus a rendered .png preview
@@ -1851,6 +2134,295 @@ HOW TO WORK
   inside the shape budget you are given; it is checked after every compile.
   If the report shows an error, fixing it comes before adding anything new.
 """
+
+
+def lock_dims_line(style: dict) -> str:
+    """The Shape Control values written as one readable clause."""
+    t = normalize_style(style)
+    return (f"complexity {t['complexity']} of 5, {t['detail']} detail, "
+            f"{t['proportions']} proportions, symmetry {t['symmetry']}")
+
+
+def style_lock_text(lock: str, style: dict = None) -> str:
+    """The standing art direction, marked as binding across every round.
+
+    This is repeated in full on every prompt rather than stated once at the
+    start of a chat. Style drift is silent - no compiler error catches "the
+    palette is wrong" or "this mob does not match the other forty" - so the
+    one instruction that cannot be checked afterwards is the one that has to
+    be restated every time. It also keeps each prompt self-contained, so a
+    round can be pasted into a brand-new chat and still come back on-style.
+    """
+    body = (lock or "").strip()
+    if not body:
+        return ""
+    lines = [
+        "STANDING ART DIRECTION - applies to every asset in this project",
+        "  These rules are locked. They are not part of this round's request and",
+        "  they do not expire: obey them on this asset and on every future one,",
+        "  even when the request below says nothing about them. If a rule here",
+        "  conflicts with the request below, follow this section and say so in",
+        "  your plan line.",
+        "",
+    ]
+    lines += ["  " + l.rstrip() for l in body.splitlines()]
+    # The palette and the written rules are only half of a style. The form
+    # rules - how dense, how chunky, how symmetrical - are set by the Shape
+    # Controls and spelled out under SHAPE BUDGET below. Without this line a
+    # model reads those as this round's brief rather than as standing law,
+    # and quietly drifts denser or chunkier the moment the brief is silent.
+    if style:
+        lines += [
+            "",
+            "  ALSO LOCKED - the form rules under SHAPE BUDGET are part of this lock:",
+            "    " + lock_dims_line(style) + ".",
+            "  Those are not this round's preference. They hold for every asset in",
+            "  the project, and the budget there is a hard ceiling, not a target.",
+        ]
+    return "\n".join(lines)
+
+
+# ======================================================================
+# STYLE SPEC GENERATOR
+# ----------------------------------------------------------------------
+# A round trip: ask a model to turn a loose description of an art
+# direction into a structured spec, then ingest that spec. The known keys
+# drive the Shape Controls; everything else - extra rules, notes, keys the
+# schema never anticipated - is folded into the style lock text rather
+# than discarded, so nothing the model thought worth saying is lost.
+# ======================================================================
+
+STYLE_SPEC_PROMPT = """Turn the art direction below into a style specification for a
+game-asset pipeline.
+
+THE ART DIRECTION
+  {brief}
+
+Answer with ONE fenced JSON block and nothing else:
+
+```json
+{{
+  "name": "short name for this style, e.g. STRATA industrial mobs",
+  "palette": {{
+    "base":   "#rrggbb",
+    "shadow": "#rrggbb",
+    "accent": "#rrggbb",
+    "<any other role you need>": "#rrggbb"
+  }},
+  "complexity": 3,
+  "symmetry": "none | mirror-x | mirror-z | radial",
+  "proportions": "cubic | mixed | elongated",
+  "detail": {{
+    "level": "low | medium | high",
+    "notes": "what detail means here in words - what gets detailed and what stays plain"
+  }},
+  "surface": "how surfaces are treated: flat blocks, panel seams, rivets, wear...",
+  "silhouette": "what the outline has to do to be recognisable at a distance",
+  "materials": "what the thing reads as made of",
+  "forbid": ["things this style never does"],
+  "rules": [
+    "One hard rule per line. Be concrete and checkable by eye.",
+    "Name real numbers where they matter, e.g. 'mobs 16 units wide max'.",
+    "Say what is forbidden as well as what is required."
+  ],
+  "notes": "Anything that matters but does not fit a field above."
+}}
+```
+
+WHAT THE FIELDS MEAN
+  complexity   1-5. A budget on how many parts an asset may use.
+               1 is a bold silhouette, 3 is a normal game asset, 5 is a boss.
+  symmetry     Whether assets must mirror, and about which axis.
+  proportions  cubic keeps every box chunky (max 2:1 long-to-short);
+               mixed allows slabs and elongated forms up to 4:1;
+               elongated removes the cap entirely.
+  detail       Both a level and a sentence. The level sets the budget;
+               the sentence is restated to the model every round, so it is
+               where "detailed" actually gets defined for this project.
+  surface      Surface treatment. A palette says what colour a thing is;
+               this says what it looks made of and how worked it is.
+  silhouette   What the outline must achieve. The one rule that survives
+               being viewed from across the map.
+  forbid       Hard bans. These are the most useful lines in a style lock,
+               because drift shows up as things creeping back in.
+  rules        The part that does the real work. These are restated to the
+               generating model on every single asset, so write them as
+               standing law, not as a description of one asset.
+  palette      Hex colours with a role name each. Roles are free-form; use
+               whatever the art direction actually needs.
+
+RULES FOR YOUR ANSWER
+  Valid JSON only - double quotes, no trailing commas, no comments.
+  Add extra top-level keys if the art direction needs them; they will be
+  kept as notes rather than dropped, so do not force detail into a field
+  where it does not belong.
+  Do not invent an art direction that was not asked for. If the brief is
+  thin, keep the spec small and say what you assumed in "notes".
+"""
+
+STYLE_KNOWN_KEYS = {"name", "palette", "complexity", "symmetry", "proportions",
+                    "detail", "rules", "notes",
+                    # A style is more than a palette. These carry the part a
+                    # colour list cannot: how dense the forms read, how the
+                    # surface is treated, what the silhouette must do, and what
+                    # is banned outright. Each becomes a locked rule line.
+                    "surface", "silhouette", "forbid", "materials"}
+
+
+def extract_json(text: str):
+    """Pull the first JSON object out of whatever the model sent.
+
+    Same tolerance as the DSL extractor: a fenced block, a bare object, or
+    an object sitting in prose. Returns (obj, error_message).
+    """
+    if not text or not text.strip():
+        return None, "nothing to parse"
+    raw = text.replace("\r\n", "\n")
+    candidates = []
+    for m in FENCE_RE.finditer(raw):
+        candidates.append(m.group(1))
+    candidates.append(raw)
+    # Also try the outermost {...} span, for a reply with prose either side.
+    i, j = raw.find("{"), raw.rfind("}")
+    if i >= 0 and j > i:
+        candidates.append(raw[i:j + 1])
+    last = "no JSON object found"
+    for c in candidates:
+        c = c.strip()
+        if not c.startswith("{"):
+            k, l = c.find("{"), c.rfind("}")
+            if k < 0 or l <= k:
+                continue
+            c = c[k:l + 1]
+        try:
+            obj = json.loads(c)
+            if isinstance(obj, dict):
+                return obj, None
+        except Exception as exc:
+            last = str(exc)
+    return None, last
+
+
+def style_spec_to_lock(spec: dict) -> dict:
+    """Turn a parsed spec into lock text plus Shape Control values.
+
+    Unknown keys are not errors. They are rendered into the lock text under
+    their own heading, because a model that volunteered a field the schema
+    did not ask for usually had a reason.
+    """
+    warn = []
+    lines = []
+
+    name = str(spec.get("name") or "").strip()
+
+    pal = spec.get("palette")
+    if isinstance(pal, dict) and pal:
+        bits = []
+        for role, val in pal.items():
+            v = str(val).strip()
+            if not re.fullmatch(r"#[0-9a-fA-F]{3,8}", v):
+                warn.append(f"palette.{role} is not a hex colour ({v!r}) - kept as written")
+            bits.append(f"{role} {v}")
+        lines.append("Palette: " + ", ".join(bits) + ". Use these and no others.")
+    elif pal is not None:
+        warn.append("palette was not an object - ignored")
+
+    # detail/surface/silhouette/materials are the "and also the detail" half
+    # of a style lock. Each may be a string, a list of lines, or an object
+    # with prose attached; all three shapes become locked lines.
+    def _prose(key, lead):
+        v = spec.get(key)
+        if v is None:
+            return
+        if isinstance(v, dict):
+            bits = [f"{k} {vv}" for k, vv in v.items()]
+            txt = ", ".join(bits)
+        elif isinstance(v, (list, tuple)):
+            txt = "; ".join(str(x).strip() for x in v if str(x).strip())
+        else:
+            txt = str(v).strip()
+        if txt:
+            lines.append(f"{lead}: {txt}")
+
+    det = spec.get("detail")
+    if isinstance(det, dict):
+        # the enum feeds the slider, the prose feeds the lock
+        lvl = str(det.get("level") or det.get("value") or "").strip().lower()
+        if lvl in DETAIL_NOTE:
+            spec = dict(spec); spec["detail"] = lvl
+        note = str(det.get("notes") or det.get("note") or "").strip()
+        if note:
+            lines.append("Detail: " + note)
+        if lvl and lvl not in DETAIL_NOTE:
+            warn.append(f"detail.level {lvl!r} is not low/medium/high - prose kept, slider unchanged")
+    elif isinstance(det, str) and det.strip().lower() not in DETAIL_NOTE and det.strip():
+        # free prose in the detail field: keep it as a rule rather than drop it
+        lines.append("Detail: " + det.strip())
+
+    _prose("surface", "Surface")
+    _prose("silhouette", "Silhouette")
+    _prose("materials", "Materials")
+    forb = spec.get("forbid")
+    if forb is not None:
+        if isinstance(forb, (list, tuple)):
+            for f in forb:
+                t = str(f).strip()
+                if t:
+                    lines.append("Never: " + t)
+        else:
+            lines.append("Never: " + str(forb).strip())
+
+    rules = spec.get("rules")
+    if isinstance(rules, str):
+        rules = [rules]
+    if isinstance(rules, list):
+        for r in rules:
+            t = str(r).strip()
+            if t:
+                lines.append(t)
+    elif rules is not None:
+        warn.append("rules was not a list - ignored")
+
+    notes = str(spec.get("notes") or "").strip()
+    if notes:
+        lines.append("")
+        lines.append("Notes: " + notes)
+
+    # Anything the schema did not anticipate, preserved verbatim.
+    extras = {k: v for k, v in spec.items() if k not in STYLE_KNOWN_KEYS}
+    if extras:
+        lines.append("")
+        lines.append("Additional direction:")
+        for k, v in extras.items():
+            if isinstance(v, (dict, list)):
+                lines.append(f"  {k}: " + json.dumps(v, separators=(", ", ": ")))
+            else:
+                lines.append(f"  {k}: {v}")
+
+    style = {}
+    if "complexity" in spec:
+        try:
+            style["complexity"] = max(1, min(5, int(spec["complexity"])))
+        except Exception:
+            warn.append(f"complexity {spec['complexity']!r} is not 1-5 - left unchanged")
+    for key, allowed in (("symmetry", ("none", "mirror-x", "mirror-z", "radial")),
+                         ("proportions", ("cubic", "mixed", "elongated")),
+                         ("detail", ("low", "medium", "high"))):
+        if key in spec:
+            v = str(spec[key]).strip().lower()
+            if v in allowed:
+                style[key] = v
+            else:
+                warn.append(f"{key} {spec[key]!r} is not one of {'/'.join(allowed)} - left unchanged")
+
+    return {
+        "ok": True,
+        "name": name,
+        "lock": "\n".join(lines).strip(),
+        "style": style,
+        "extras": sorted(extras.keys()),
+        "warnings": warn,
+    }
 
 
 def build_engineered_prompt(payload):
@@ -1879,6 +2451,7 @@ def build_engineered_prompt(payload):
     include_report = bool(payload.get("includeReport", True))
     full_dsl = bool(payload.get("fullDsl", False))
     want_context = payload.get("context", True) is not False
+    style_lock = payload.get("styleLock", "") if payload.get("styleLockOn", True) is not False else ""
     runnable = bool(payload.get("runnable", False))
 
     if mode == "fix":
@@ -1920,6 +2493,12 @@ def build_engineered_prompt(payload):
     where = " ".join(part for part in (name, f"({tag})" if tag else "", f"on {branch}" if branch else "") if part)
     extra = []
 
+    # Standing art direction leads the round context: it governs everything
+    # that follows, including a NEW TAKE that otherwise inherits nothing.
+    lock_block = style_lock_text(style_lock, payload.get("style"))
+    if lock_block:
+        extra.append(lock_block)
+
     if mode == "new_take":
         extra.append(
             "THIS ROUND - NEW TAKE" + (f" - {where}" if where else "") + "\n"
@@ -1950,7 +2529,24 @@ def build_engineered_prompt(payload):
 
     # The shape budget goes in as hard limits, and is re-measured after the
     # compile, so it binds rather than merely suggesting.
-    extra.append(style_constraints_text(kind, payload.get("style")))
+    bones_now = len(re.findall(r"(?m)^\s*bone\s+\S", dsl or ""))
+    extra.append(style_constraints_text(kind, payload.get("style"), bones_now, brief))
+    size_note = size_budget_note(kind, payload.get("style"), brief)
+    if size_note:
+        extra.append(size_note.rstrip())
+    if kind == "model":
+        extra.append(
+            "WHAT THIS GRAMMAR CANNOT DO - do not attempt these\n"
+            "  There are no rotated boxes, no wedges, cylinders or slopes, no material\n"
+            "  ids, no emissive or glow channel, and no sockets. A box has exactly three\n"
+            "  attributes: from, to and color. Any other attribute is parsed and then\n"
+            "  silently discarded, so writing rot= or material_id= does nothing at all\n"
+            "  and you will not be told.\n"
+            "  Work within that: build slopes as stepped boxes, read glow as a bright\n"
+            "  saturated colour, and mark an attachment point as an empty bone. If the\n"
+            "  brief asks for something this grammar cannot express, say so plainly in\n"
+            "  your plan line rather than inventing syntax for it."
+        )
 
     if full_dsl:
         extra.append(
@@ -1996,7 +2592,89 @@ def build_engineered_prompt(payload):
     else:
         text = text.rstrip() + "\n\n" + NEW_CONTRACT.rstrip()
 
-    return {"ok": True, "kind": kind, "mode": mode, "prompt": text, "length": len(text)}
+    # A manifest of what actually ended up in the prompt, so the UI can show
+    # the operator the whole thing is present before they copy it. Measured
+    # against the finished text rather than asserted, so a section that
+    # silently failed to assemble shows as missing instead of claiming to be
+    # there.
+    # A manifest of what actually ended up in the prompt, so the operator can
+    # see the whole thing is present before copying. Measured against the
+    # finished text rather than asserted, so a section that silently failed to
+    # assemble shows as absent instead of claiming to be there.
+    #
+    # "required" means this prompt is incomplete without it. The rest are
+    # track-specific: the prop grammar carries far more guidance than the
+    # texture one, so their absence is normal and must not read as an error.
+    probes = [
+        ("System briefing", "ABOUT THIS SYSTEM", want_context, True,
+         "what the pipeline is, why it writes a document, what files come out"),
+        ("Role & how to think", "HOW TO THINK ABOUT", True, False,
+         "the reasoning ladder for this kind of asset"),
+        ("Grammar", "THE LANGUAGE", True, False,
+         "every statement the compiler accepts"),
+        ("Worked example", "WORKED EXAMPLE", True, False,
+         "one complete document that compiles"),
+        ("Reading the views", "READING THE", False, False,
+         "how to interpret the ASCII silhouettes"),
+        ("Values & tokens", "VALUES", False, False,
+         "named constants like $wall.std"),
+        ("Operations", "THE THREE OPERATIONS", False, False,
+         "revolve / extrude / loft and when each is right"),
+        ("Assembly rules", "ASSEMBLY IS PLACEMENT", False, False,
+         "why parts are placed, never fused"),
+        ("Known failures", "FAILURES THAT ACTUALLY HAPPEN", False, False,
+         "the mistakes this track invites, and their causes"),
+        ("Standing art direction", "STANDING ART DIRECTION", bool(lock_block), True,
+         "your style lock, repeated every round"),
+        ("Shape budget", "SHAPE BUDGET", True, False,
+         "complexity, proportions, symmetry - checked after compile"),
+        ("Your request", "THE BRIEF", True, False,
+         "what you asked for this round"),
+        ("Current source", "CURRENT DESIGN SOURCE", bool(dsl and mode != "new_take"), True,
+         "the document being edited"),
+        ("Compiler report", "CURRENT COMPILER REPORT", bool(include_report and report and mode != "new_take"), True,
+         "last round's errors and measurements"),
+        ("This round's job", "THIS ROUND", True, False,
+         "edit / new take / fix instruction"),
+        ("Output contract", "OUTPUT CONTRACT", True, False,
+         "how to format the reply"),
+        ("What happens next", "WHAT HAPPENS NEXT", False, False,
+         "the loop the model is about to enter"),
+    ]
+    found, order = {}, []
+    for label, needle, req, toggleable, why in probes:
+        at = text.find(needle)
+        found[label] = at
+        if at >= 0:
+            order.append((at, label, why, req))
+    order.sort()
+    sections = []
+    for i, (at, label, why, req) in enumerate(order):
+        end = order[i + 1][0] if i + 1 < len(order) else len(text)
+        sections.append({"name": label, "chars": end - at, "why": why, "required": req})
+    missing = [l for l, n, req, t, _ in probes if req and found[l] < 0]
+    # Absent for two different reasons, and conflating them misleads: a
+    # section this track simply does not have, versus one the operator
+    # switched off or left empty.
+    switched_off = [l for l, n, req, t, _ in probes if t and not req and found[l] < 0]
+    optional_absent = [l for l, n, req, t, _ in probes if not t and not req and found[l] < 0]
+
+    return {"ok": True, "kind": kind, "mode": mode, "prompt": text, "length": len(text),
+            "sections": sections, "missing": missing,
+            "notApplicable": optional_absent,
+            "switchedOff": switched_off,
+            "complete": not missing,
+            # What is locked, so the UI can say so plainly. A model that keeps
+            # returning the same design is usually obeying a lock the operator
+            # has forgotten is on; this is the data that warning needs.
+            "lock": {
+                "active": bool(lock_block),
+                "chars": len(style_lock),
+                "lines": len([l for l in style_lock.splitlines() if l.strip()]),
+                "dims": lock_dims_line(payload.get("style")),
+                "body": style_lock,
+            },
+            "lines": text.count("\n") + 1}
 
 
 def make_handler(storage: StudioStorage, html_path: Path):
@@ -2078,6 +2756,15 @@ def make_handler(storage: StudioStorage, html_path: Path):
                 if path == "/api/settings":
                     return self._send_json({"ok": True, "settings": storage.get_settings()})
 
+                if path == "/api/style-prompt":
+                    brief = (urlparse(self.path).query or "")
+                    from urllib.parse import parse_qs
+                    b = (parse_qs(brief).get("brief", [""])[0] or
+                         "(none given - ask the operator what look they want, "
+                         "or propose a sensible default and say so in notes)")
+                    txt = STYLE_SPEC_PROMPT.format(brief=b)
+                    return self._send_json({"ok": True, "prompt": txt, "length": len(txt)})
+
                 if path == "/api/context":
                     return self._send_json({"ok": True, "context": SYSTEM_CONTEXT,
                                              "length": len(SYSTEM_CONTEXT)})
@@ -2158,7 +2845,8 @@ def make_handler(storage: StudioStorage, html_path: Path):
             try:
                 if len(parts) == 3 and parts[0] == "api" and parts[1] == "projects":
                     body = self._read_json()
-                    return self._send_json(storage.rename_project(parts[2], body.get("name", "")))
+                    return self._send_json(storage.rename_project(
+                        parts[2], body.get("name", ""), body.get("folder")))
                 return self._send_json({"ok": False, "error": "Not found"}, 404)
             except Exception as exc:
                 return self._send_json({"ok": False, "error": str(exc)}, 400)
@@ -2195,6 +2883,13 @@ def make_handler(storage: StudioStorage, html_path: Path):
                     return self._send_json(storage.run_direct_llm(body.get("prompt", "")))
                 if path == "/api/prompt":
                     return self._send_json(build_engineered_prompt(body))
+                if path == "/api/style-parse":
+                    spec, err = extract_json(body.get("text", ""))
+                    if spec is None:
+                        return self._send_json(
+                            {"ok": False,
+                             "error": f"Could not read a JSON style spec: {err}"}, 400)
+                    return self._send_json(style_spec_to_lock(spec))
                 return self._send_json({"ok": False, "error": f"Unknown POST route {path}"}, 404)
             except Exception as exc:
                 return self._send_json({"ok": False, "error": str(exc)}, 400)
@@ -2210,6 +2905,14 @@ def main():
     parser.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8765, help="Port number (default: 8765)")
     parser.add_argument("--workspace", default="./workspace", help="Directory for studio.db & project files")
+    parser.add_argument("--repair", action="store_true",
+                        help="Recompile every stored revision and write its true status. "
+                             "Never deletes anything; fixes verdicts left by older builds.")
+    parser.add_argument("--replace-examples", action="store_true",
+                        help="Swap only the three built-in demo assets for current ones. "
+                             "Skips any you have added revisions to.")
+    parser.add_argument("--audit", action="store_true",
+                        help="Report which stored revisions disagree with the compiler, and change nothing.")
     parser.add_argument(
         "--ui",
         default=None,
@@ -2223,6 +2926,45 @@ def main():
         parser.error(str(exc))
 
     storage = StudioStorage(Path(args.workspace))
+
+    if args.audit:
+        a = storage.audit()
+        print(f"Audited {a['total']} revision(s): {a['agree']} agree with the compiler, "
+              f"{len(a['mismatched'])} do not.")
+        for m in a["mismatched"]:
+            print(f"  {m['project']}/{m['tag']}: stored {m['stored']}, actually {m['actual']} "
+                  f"({m['errors']} error(s))")
+        if a["mismatched"]:
+            print("\nRun with --repair to write the true status, or --replace-examples "
+                  "to refresh just the demo assets.")
+        return
+
+    if args.replace_examples:
+        print("Replacing built-in demo assets...")
+        r = storage.replace_examples()
+        print(f"Replaced {len(r['replaced'])}, kept {len(r['skipped'])}.")
+
+    if args.repair:
+        print("Recompiling every stored revision...")
+        r = storage.repair()
+        print(f"Checked {r['checked']}: {r['corrected']} verdict(s) corrected, "
+              f"{r['now_failing']} genuinely failing, {r['unchanged']} already right.")
+        print("Source, notes, branches and prompt history were not touched.")
+
+    # Maintenance flags do their work and stop, so they never leave a server
+    # running unexpectedly. Start it the normal way afterwards.
+    if args.repair or args.replace_examples:
+        print("\nDone. Start the Studio normally:")
+        print(f"  python3 studio_server.py --workspace {args.workspace}")
+        return
+
+    # Quietly check for revisions an older build mislabelled, and say so once.
+    try:
+        a = storage.audit()
+        stale = len(a["mismatched"])
+    except Exception:
+        stale = 0
+
     handler = make_handler(storage, html_path)
 
     server = ThreadingHTTPServer((args.host, args.port), handler)
@@ -2233,6 +2975,14 @@ def main():
     print(f"UI Settings JSON       -> {storage.settings_json_path}")
     print(f"Project Artifacts      -> {storage.projects_dir}")
     print(f"CAD Compiler Bridge    -> {'ACTIVE (designbridge.py)' if HAS_DESIGNBRIDGE else 'BUILT-IN VALIDATOR'}")
+    if stale:
+        print("")
+        print(f"!! {stale} stored revision(s) carry a status the compiler disagrees with.")
+        print("   They were written by an older build and cannot compile as they stand.")
+        print("   Your work is safe - nothing has been changed. To fix the labels:")
+        print(f"     python3 studio_server.py --repair --workspace {args.workspace}")
+        print("   To also refresh the three built-in demo assets:")
+        print(f"     python3 studio_server.py --replace-examples --repair --workspace {args.workspace}")
     print("Press Ctrl+C to stop.")
     print("============================================================", flush=True)
     try:

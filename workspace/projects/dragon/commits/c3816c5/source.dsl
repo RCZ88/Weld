@@ -1,0 +1,87 @@
+model "crowned_wyrm"
+bone body pivot=(0,22,0)
+  box from=(-9,18,-16) to=(9,38,14) color=#2b2624
+  box from=(-7,38,-12) to=(7,41,10) color=#3a2f2a
+  box from=(-2,20,-17) to=(2,36,-15) color=#8a3b1c
+  box from=(-5,41,-8) to=(-3,46,-5) color=#c9a227
+  box from=(3,41,-1) to=(5,46,2) color=#c9a227
+  box from=(-5,41,4) to=(-3,46,7) color=#c9a227
+bone chest_plate parent=body pivot=(0,28,-16)
+  box from=(-8,20,-20) to=(8,36,-16) color=#4a3a32
+  box from=(-1,22,-21) to=(1,34,-20) color=#e0a526
+bone neck1 parent=body pivot=(0,34,-14)
+  box from=(-4,32,-24) to=(4,42,-14) color=#2b2624
+bone neck2 parent=neck1 pivot=(0,40,-23)
+  box from=(-3.5,38,-32) to=(3.5,48,-23) color=#35292a
+bone head parent=neck2 pivot=(0,46,-31)
+  box from=(-6,44,-44) to=(6,56,-30) color=#d8d0bc
+  box from=(-4,44,-52) to=(4,50,-44) color=#cfc6b0
+  box from=(-5,52,-46) to=(5,56,-38) color=#b8ae98
+  box from=(-5,53,-42) to=(-2,56,-40) color=#ff7a1a
+  box from=(2,53,-42) to=(5,56,-40) color=#ff7a1a
+  box from=(-1,56,-42) to=(1,59,-32) color=#8a3b1c
+bone jaw parent=head pivot=(0,45,-34)
+  box from=(-4,40,-50) to=(4,44,-34) color=#b8ae98
+  box from=(-3,44,-49) to=(3,46,-46) color=#f2ecd8
+  box from=(-1,41,-46) to=(1,43,-40) color=#ff5a00
+bone horn_l parent=head pivot=(6,55,-34)
+  box from=(6,54,-36) to=(9,58,-32) color=#c9a227
+  box from=(8,58,-35) to=(11,66,-32) color=#e0a526
+  box from=(10,66,-34) to=(12,72,-33) color=#f2d24a
+bone horn_r parent=head pivot=(-6,55,-34)
+  box from=(-9,54,-36) to=(-6,58,-32) color=#c9a227
+  box from=(-11,58,-35) to=(-8,66,-32) color=#e0a526
+  box from=(-12,66,-34) to=(-10,72,-33) color=#f2d24a
+bone wing_l parent=body pivot=(9,36,0)
+  box from=(9,34,-3) to=(14,40,3) color=#3a2f2a
+  box from=(14,36,-2) to=(34,39,2) color=#2b2624
+  box from=(16,18,-1) to=(34,36,1) color=#6b1f14
+  box from=(34,38,-2) to=(52,41,2) color=#2b2624
+  box from=(34,14,-1) to=(52,38,1) color=#7a2418
+  box from=(50,40,-1) to=(60,56,1) color=#c9a227
+bone wing_r parent=body pivot=(-9,36,0)
+  box from=(-14,34,-3) to=(-9,40,3) color=#3a2f2a
+  box from=(-34,36,-2) to=(-14,39,2) color=#2b2624
+  box from=(-34,18,-1) to=(-16,36,1) color=#6b1f14
+  box from=(-52,38,-2) to=(-34,41,2) color=#2b2624
+  box from=(-52,14,-1) to=(-34,38,1) color=#7a2418
+  box from=(-60,40,-1) to=(-50,56,1) color=#c9a227
+bone leg_l parent=body pivot=(8,20,-4)
+  box from=(7,8,-9) to=(15,22,1) color=#2b2624
+  box from=(8,0,-8) to=(14,10,-2) color=#35292a
+  box from=(7,0,-14) to=(15,3,-8) color=#d8d0bc
+bone leg_r parent=body pivot=(-8,20,-4)
+  box from=(-15,8,-9) to=(-7,22,1) color=#2b2624
+  box from=(-14,0,-8) to=(-8,10,-2) color=#35292a
+  box from=(-15,0,-14) to=(-7,3,-8) color=#d8d0bc
+bone tail1 parent=body pivot=(0,26,14)
+  box from=(-6,18,14) to=(6,32,26) color=#2b2624
+bone tail2 parent=tail1 pivot=(0,24,25)
+  box from=(-4.5,17,25) to=(4.5,29,38) color=#35292a
+  box from=(-1,29,26) to=(1,33,36) color=#c9a227
+bone tail3 parent=tail2 pivot=(0,22,37)
+  box from=(-3,15,37) to=(3,25,50) color=#2b2624
+  box from=(-1,25,39) to=(1,28,48) color=#c9a227
+bone tail4 parent=tail3 pivot=(0,20,49)
+  box from=(-1.5,13,49) to=(1.5,21,62) color=#3a2f2a
+  box from=(-4,10,60) to=(4,24,68) color=#ff7a1a
+  box from=(-1,24,61) to=(1,32,67) color=#c9a227
+animation "roar" loop=true
+  key wing_l t=0 rot=(0,0,0)
+  key wing_l t=0.8 rot=(0,0,-35)
+  key wing_l t=1.6 rot=(0,0,0)
+  key wing_r t=0 rot=(0,0,0)
+  key wing_r t=0.8 rot=(0,0,35)
+  key wing_r t=1.6 rot=(0,0,0)
+  key head t=0 rot=(0,0,0)
+  key head t=0.8 rot=(-20,0,0)
+  key head t=1.6 rot=(0,0,0)
+  key jaw t=0 rot=(0,0,0)
+  key jaw t=0.8 rot=(35,0,0)
+  key jaw t=1.6 rot=(0,0,0)
+  key tail1 t=0 rot=(0,-10,0)
+  key tail1 t=0.8 rot=(0,10,0)
+  key tail1 t=1.6 rot=(0,-10,0)
+  key tail3 t=0 rot=(0,12,0)
+  key tail3 t=0.8 rot=(0,-12,0)
+  key tail3 t=1.6 rot=(0,12,0)

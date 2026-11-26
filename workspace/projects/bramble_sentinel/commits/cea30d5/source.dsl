@@ -1,0 +1,136 @@
+model "bramble_sentinel"
+bone torso pivot=(0,66,0)
+  box from=(-18,58,-10) to=(18,72,10) color=#22252a
+  box from=(-19,66,-11) to=(19,69,11) color=#c79a4b
+  box from=(-10,70,-7) to=(10,86,7) color=#3a3f45
+  box from=(-22,84,4) to=(22,112,12) color=#3a3f45
+  box from=(-8,90,-2) to=(8,106,6) color=#1ce8ff
+  box from=(-22,84,-14) to=(-15,112,8) color=#22252a
+  box from=(15,84,-14) to=(22,112,8) color=#22252a
+  box from=(-22,88,-14) to=(22,91,-8) color=#eae6df
+  box from=(-22,97,-14) to=(22,100,-8) color=#eae6df
+  box from=(-22,106,-14) to=(22,109,-8) color=#eae6df
+  box from=(-10,110,-8) to=(10,120,6) color=#22252a
+  box from=(-22,108,-2) to=(4,114,14) color=#46633b
+bone head parent=torso pivot=(0,118,-2)
+  box from=(-8,118,-12) to=(8,134,4) color=#eae6df
+  box from=(-6,124,-14) to=(6,127,-10) color=#ffb830
+  box from=(-6,114,-12) to=(6,119,-4) color=#3a3f45
+  box from=(-12,120,-6) to=(-6,134,-2) color=#4e7d70
+  box from=(-8,133,-12) to=(0,136,0) color=#46633b
+  box from=(-9,132,-4) to=(-6,156,-1) color=#4a1c6b
+  box from=(-4,132,-6) to=(-1,150,-3) color=#4a1c6b
+  box from=(2,132,-2) to=(5,160,1) color=#4a1c6b
+  box from=(6,132,-6) to=(9,148,-3) color=#4a1c6b
+  box from=(-3,132,1) to=(0,146,4) color=#4a1c6b
+bone arm_L parent=torso pivot=(26,108,0)
+  box from=(20,104,-12) to=(40,116,12) color=#22252a
+  box from=(24,115,-10) to=(38,120,10) color=#46633b
+  box from=(28,76,-8) to=(38,106,8) color=#3a3f45
+  box from=(37,80,-3) to=(41,106,0) color=#c79a4b
+  box from=(30,118,-3) to=(33,140,0) color=#4a1c6b
+  box from=(35,118,3) to=(38,134,6) color=#4a1c6b
+bone arm_fore_L parent=arm_L pivot=(33,78,0)
+  box from=(26,30,-12) to=(42,80,12) color=#3a3f45
+  box from=(24,50,-14) to=(44,62,14) color=#46633b
+  box from=(24,70,-14) to=(44,76,14) color=#4e7d70
+  box from=(22,0,-18) to=(46,34,16) color=#22252a
+  box from=(43,34,-4) to=(47,78,-1) color=#4a1c6b
+  box from=(30,30,-6) to=(34,42,-2) color=#c79a4b
+  box from=(38,30,4) to=(42,40,8) color=#c79a4b
+bone arm_R parent=torso pivot=(-26,108,0)
+  box from=(-40,104,-10) to=(-20,114,10) color=#eae6df
+  box from=(-36,80,-6) to=(-28,106,6) color=#3a3f45
+  box from=(-39,84,-3) to=(-35,106,0) color=#c79a4b
+  box from=(-34,86,-9) to=(-30,106,-4) color=#4e7d70
+  box from=(-38,100,4) to=(-35,112,7) color=#46633b
+bone arm_fore_R parent=arm_R pivot=(-32,82,0)
+  box from=(-37,74,-48) to=(-27,88,-2) color=#3a3f45
+  box from=(-38,72,-30) to=(-26,90,-24) color=#4e7d70
+  box from=(-40,66,-56) to=(-24,92,-46) color=#22252a
+  box from=(-40,50,-56) to=(-37,68,-52) color=#c79a4b
+  box from=(-34,50,-56) to=(-31,68,-52) color=#c79a4b
+  box from=(-28,50,-56) to=(-25,68,-52) color=#c79a4b
+  box from=(-36,70,-58) to=(-28,80,-54) color=#ff6a1a
+bone thigh_L parent=torso pivot=(16,64,0)
+  box from=(10,44,-8) to=(24,66,8) color=#3a3f45
+  box from=(8,52,-10) to=(26,60,10) color=#4e7d70
+  box from=(12,30,-3) to=(22,46,5) color=#c79a4b
+  box from=(23,50,-4) to=(27,64,4) color=#eae6df
+bone shin_L parent=thigh_L pivot=(16,44,0)
+  box from=(11,8,-6) to=(21,46,6) color=#3a3f45
+  box from=(9,22,-8) to=(23,30,8) color=#46633b
+  box from=(20,14,-3) to=(24,44,0) color=#c79a4b
+  box from=(6,0,-20) to=(26,10,8) color=#22252a
+  box from=(6,0,-28) to=(26,4,-18) color=#3a3f45
+bone thigh_R parent=torso pivot=(-16,64,0)
+  box from=(-24,44,-8) to=(-10,66,8) color=#3a3f45
+  box from=(-26,52,-10) to=(-8,60,10) color=#4e7d70
+  box from=(-22,30,-3) to=(-12,46,5) color=#c79a4b
+  box from=(-27,50,-4) to=(-23,64,4) color=#eae6df
+bone shin_R parent=thigh_R pivot=(-16,44,0)
+  box from=(-21,8,-6) to=(-11,46,6) color=#3a3f45
+  box from=(-23,22,-8) to=(-9,30,8) color=#46633b
+  box from=(-24,14,-3) to=(-20,44,0) color=#c79a4b
+  box from=(-26,0,-20) to=(-6,10,8) color=#22252a
+  box from=(-26,0,-28) to=(-6,4,-18) color=#3a3f45
+bone back_rack parent=torso pivot=(0,100,12)
+  box from=(-3,84,12) to=(3,116,16) color=#3a3f45
+  box from=(-20,104,13) to=(24,108,16) color=#3a3f45
+  box from=(-20,96,14) to=(-6,126,16) color=#4e7d70
+  box from=(6,100,14) to=(24,132,16) color=#4e7d70
+  box from=(-4,112,14) to=(4,142,16) color=#4e7d70
+  box from=(10,90,14) to=(17,124,21) color=#22252a
+  box from=(11,124,15) to=(16,127,20) color=#ff6a1a
+  box from=(-18,84,10) to=(-2,100,26) color=#46633b
+  box from=(-14,98,18) to=(-11,122,21) color=#4a1c6b
+animation "idle" loop=true
+  key torso t=0 pos=(0,0,0)
+  key torso t=1.5 pos=(0,1,0)
+  key torso t=3 pos=(0,0,0)
+  key head t=0 rot=(0,-6,0)
+  key head t=1.5 rot=(0,6,0)
+  key head t=3 rot=(0,-6,0)
+  key back_rack t=0 rot=(0,0,-2)
+  key back_rack t=1.5 rot=(0,0,2)
+  key back_rack t=3 rot=(0,0,-2)
+  key arm_fore_R t=0 rot=(0,0,0)
+  key arm_fore_R t=1.5 rot=(-6,0,0)
+  key arm_fore_R t=3 rot=(0,0,0)
+  key arm_L t=0 rot=(0,0,0)
+  key arm_L t=1.5 rot=(-3,0,0)
+  key arm_L t=3 rot=(0,0,0)
+animation "walk" loop=true
+  key thigh_L t=0 rot=(22,0,0)
+  key thigh_L t=0.6 rot=(-22,0,0)
+  key thigh_L t=1.2 rot=(22,0,0)
+  key thigh_R t=0 rot=(-22,0,0)
+  key thigh_R t=0.6 rot=(22,0,0)
+  key thigh_R t=1.2 rot=(-22,0,0)
+  key arm_L t=0 rot=(-18,0,0)
+  key arm_L t=0.6 rot=(18,0,0)
+  key arm_L t=1.2 rot=(-18,0,0)
+  key arm_R t=0 rot=(18,0,0)
+  key arm_R t=0.6 rot=(-18,0,0)
+  key arm_R t=1.2 rot=(18,0,0)
+  key torso t=0 pos=(0,0,0)
+  key torso t=0.3 pos=(0,3,0)
+  key torso t=0.6 pos=(0,0,0)
+  key torso t=0.9 pos=(0,3,0)
+  key torso t=1.2 pos=(0,0,0)
+animation "slam" loop=false
+  key arm_L t=0 rot=(0,0,0)
+  key arm_L t=0.7 rot=(-140,0,0)
+  key arm_L t=0.95 rot=(12,0,0)
+  key arm_L t=1.6 rot=(0,0,0)
+  key arm_fore_L t=0 rot=(0,0,0)
+  key arm_fore_L t=0.7 rot=(-25,0,0)
+  key arm_fore_L t=0.95 rot=(5,0,0)
+  key arm_fore_L t=1.6 rot=(0,0,0)
+  key torso t=0 rot=(0,0,0)
+  key torso t=0.7 rot=(-8,0,0)
+  key torso t=0.95 rot=(8,0,0)
+  key torso t=1.6 rot=(0,0,0)
+  key head t=0.7 rot=(-12,0,0)
+  key head t=0.95 rot=(10,0,0)
+  key head t=1.6 rot=(0,0,0)

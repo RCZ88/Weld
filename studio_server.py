@@ -118,6 +118,8 @@ DEFAULT_SETTINGS = {
     "llmModel": "qwen2.5-coder:7b",
     "llmApiKey": "",
     "llmAutoCompile": True,
+    # Per-asset shape budgets: {projectId: {complexity, symmetry, ...}}
+    "styles": {},
 }
 
 # ----------------------------------------------------------------------
@@ -327,24 +329,119 @@ def safe_slug(val: str) -> str:
 # quietly makes a broken design look fine.
 # ======================================================================
 
-SENTINEL_RE = re.compile(r"<<<\s*DESIGN\b(.*?)>>>", re.S | re.I)
+SENTINEL_RE = re.compile(r"<<<\s*DESIGN\b(.*?)(?:>>>|$)", re.S | re.I)
+FENCE_RE = re.compile(r"```[ \t]*[A-Za-z0-9_+-]*[ \t]*\r?\n(.*?)(?:\r?\n[ \t]*```|$)", re.S)
+MARKER_RE = re.compile(r"(?:^|\n)[ \t]*(?:BEGIN[_ ]DESIGN|DESIGN[_ ]START)[ \t]*\r?\n(.*?)"
+                       r"(?:\n[ \t]*(?:END[_ ]DESIGN|DESIGN[_ ]END)|$)", re.S | re.I)
+
+# A document always opens with one of these, so the body can be recovered
+# from a reply that has no delimiters at all.
+TOP_KEYWORDS = ("model", "texture", "design")
+# Every statement the three grammars allow. Used to decide where the source
+# stops and the model's closing prose begins.
+BODY_KEYWORDS = (
+    "model", "texture", "design", "bone", "box", "animation", "key", "note",
+    "profile", "solid", "assembly", "part", "fill", "noise", "gradient",
+    "brick", "planks", "checker", "stripes", "scatter", "veins", "dither",
+    "bevel", "outline", "path", "slot", "hole", "circle", "ellipse", "rect",
+    "ngon", "poly",
+)
+
+
+def _looks_like_source(block: str) -> bool:
+    for raw in block.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith("//"):
+            continue
+        return line.split()[0].lower().strip('"') in TOP_KEYWORDS
+    return False
+
+
+def _carve_bare_source(text: str) -> str:
+    """Recover the document from a reply with no delimiters.
+
+    Starts at the first top-level keyword and keeps going while the lines
+    still look like statements, so a trailing "Hope that helps!" is dropped
+    without taking any of the source with it.
+    """
+    lines = text.splitlines()
+    start = None
+    for i, raw in enumerate(lines):
+        line = raw.strip()
+        if line and line.split()[0].lower().strip('"') in TOP_KEYWORDS:
+            start = i
+            break
+    if start is None:
+        return ""
+    out, misses = [], 0
+    for raw in lines[start:]:
+        line = raw.strip()
+        if not line:
+            out.append(raw)
+            continue
+        head = line.split()[0].lower().strip('",')
+        if line.startswith("#") or line.startswith("//") or head in BODY_KEYWORDS:
+            out.append(raw)
+            misses = 0
+        else:
+            # Two non-statement lines in a row means the prose has resumed.
+            misses += 1
+            if misses >= 2:
+                break
+            out.append(raw)
+    while out and not out[-1].strip():
+        out.pop()
+    if misses:
+        while out and out[-1].strip() and out[-1].strip().split()[0].lower().strip('",') not in BODY_KEYWORDS \
+                and not out[-1].strip().startswith(("#", "//")):
+            out.pop()
+    return "\n".join(out)
 
 
 def strip_sentinels(text: str) -> str:
-    """Return the DSL body, with any <<<DESIGN ... >>> wrapper removed.
+    """Pull the design document out of whatever the model actually sent.
 
-    designbridge.normalize() already tolerates the sentinels, but Studio
-    strips them too so the source it stores on disk and shows in the editor
-    is the plain document the compiler actually sees.
+    The old build demanded <<<DESIGN ... >>>. Models routinely swallow those
+    angle brackets, emit an empty "<<>>", or drop the closing marker, which
+    left nothing to compile. So no single delimiter is trusted: this tries a
+    fenced block, then the legacy sentinels, then BEGIN/END markers, and
+    finally recovers bare source sitting in open prose. A reply only has to
+    contain the document somewhere.
     """
     if not text:
         return ""
-    m = SENTINEL_RE.search(text)
-    body = m.group(1) if m else text
-    # Drop a markdown fence if the model wrapped the block in one.
-    body = re.sub(r"^\s*```[a-zA-Z0-9_-]*\s*\n", "", body)
-    body = re.sub(r"\n\s*```\s*$", "", body)
-    return body.strip("\n").rstrip() + "\n"
+    raw = text.replace("\r\n", "\n")
+
+    candidates = []
+    for m in FENCE_RE.finditer(raw):
+        candidates.append(m.group(1))
+    for m in SENTINEL_RE.finditer(raw):
+        candidates.append(m.group(1))
+    for m in MARKER_RE.finditer(raw):
+        candidates.append(m.group(1))
+
+    for block in candidates:
+        # A fenced block may itself hold the legacy sentinels.
+        inner = SENTINEL_RE.search(block)
+        if inner:
+            block = inner.group(1)
+        block = block.strip("\n")
+        if _looks_like_source(block):
+            return block.rstrip() + "\n"
+
+    if _looks_like_source(raw):
+        return raw.strip("\n").rstrip() + "\n"
+
+    carved = _carve_bare_source(raw)
+    if carved:
+        return carved.rstrip() + "\n"
+
+    # Nothing recognisable. Hand back the stripped text so the compiler can
+    # report a real syntax error against what the model actually said.
+    for block in candidates:
+        if block.strip():
+            return block.strip("\n").rstrip() + "\n"
+    return raw.strip()
 
 
 class CompileResult:
@@ -451,19 +548,63 @@ def mesh_payload(result: CompileResult) -> dict:
     Returns flat float arrays so the browser can drop them into a
     THREE.BufferGeometry with no parsing and no loader dependency.
     """
+    # Build the triangle soup grouped by the thing the operator actually
+    # thinks in: a bone for a model, a part for a prop. The groups let the UI
+    # list the components, highlight one, and scope an edit to it by name.
+    groups = []   # {name, kind, start, count, color, box}
     tris = []
+
+    def _rgba_of(spec, fallback=(210, 214, 222, 255)):
+        if not spec:
+            return fallback
+        try:
+            return db_core.parse_color(spec) or fallback
+        except Exception:
+            return fallback
+
     if result.kind == "model":
-        tris = db_core.colored_tris(result.doc) or []
-    elif result.kind == "prop":
-        for part in getattr(result.doc, "parts", []) or []:
-            rgba = (210, 214, 222, 255)
-            if getattr(part, "color", None):
+        doc = result.doc
+        bones = doc.bones.values() if isinstance(doc.bones, dict) else (doc.bones or [])
+        for bone in bones:
+            start = len(tris)
+            for bx in getattr(bone, "boxes", []) or []:
+                rgba = _rgba_of(getattr(bx, "color", None))
                 try:
-                    rgba = db_core.parse_color(part.color) or rgba
+                    for t in db_core.box_tris(bx):
+                        tris.append((t, rgba))
                 except Exception:
                     pass
+            if len(tris) > start:
+                groups.append({
+                    "name": getattr(bone, "name", f"bone{len(groups)}"),
+                    "kind": "bone",
+                    "start": start,
+                    "count": len(tris) - start,
+                    "boxes": len(getattr(bone, "boxes", []) or []),
+                    "parent": getattr(bone, "parent", None) or None,
+                    "pivot": list(getattr(bone, "pivot", ()) or ()),
+                })
+        if not tris:
+            # Fall back to the flat soup if the per-bone walk found nothing.
+            tris = db_core.colored_tris(doc) or []
+            groups = []
+
+    elif result.kind == "prop":
+        for part in getattr(result.doc, "parts", []) or []:
+            start = len(tris)
+            rgba = _rgba_of(getattr(part, "color", None))
             for t in part.mesh.tris:
                 tris.append((t, rgba))
+            # A prop part is identified in the assembly by its solid's name,
+            # which is what the operator writes in an edit.
+            groups.append({
+                "name": getattr(part, "solid", None) or f"part{len(groups)}",
+                "kind": "part",
+                "start": start,
+                "count": len(tris) - start,
+                "solid": getattr(part, "solid", None) or None,
+                "at": list(getattr(part, "at", ()) or ()),
+            })
 
     positions, colors = [], []
     for tri, rgba in tris:
@@ -472,18 +613,38 @@ def mesh_payload(result: CompileResult) -> dict:
             positions.extend((round(vx, 4), round(vy, 4), round(vz, 4)))
             colors.extend((round(r, 4), round(g, 4), round(b, 4)))
 
+    def _extent(off, cnt):
+        if not cnt:
+            return None
+        a, b = off * 9, (off + cnt) * 9
+        seg = positions[a:b]
+        if not seg:
+            return None
+        xs, ys, zs = seg[0::3], seg[1::3], seg[2::3]
+        return [[min(xs), min(ys), min(zs)], [max(xs), max(ys), max(zs)]]
+
+    for g in groups:
+        g["box"] = _extent(g["start"], g["count"])
+
     lo = hi = None
     if positions:
         xs, ys, zs = positions[0::3], positions[1::3], positions[2::3]
         lo = [min(xs), min(ys), min(zs)]
         hi = [max(xs), max(ys), max(zs)]
 
+    # Which axis points up in this document's own coordinates. designbridge
+    # revolves props about Z, so a prop is Z-up while a voxel model is Y-up.
+    # The viewer needs this or props lie on their side and the floor grid
+    # slices straight through them.
     return {
         "ok": True,
         "kind": result.kind,
         "triangles": len(tris),
         "positions": positions,
         "colors": colors,
+        "groups": groups,
+        "up": "z" if result.kind == "prop" else "y",
+        "units": (getattr(result.doc, "units", "") or "") if result.kind == "prop" else "px",
         "min": lo,
         "max": hi,
     }
@@ -1153,6 +1314,14 @@ class StudioStorage:
                 result = self._compile_dsl(proj["track"], dsl, None)
                 status, report = result.status, result.report
                 errors, bounds, struct, anim = result.errors, result.bounds, result.struct, result.anim
+                # Re-measure against the declared shape budget and append the
+                # findings to the report. Style issues never change PASS/FAIL -
+                # they are the operator's own budget, not a compiler error.
+                style = normalize_style(payload.get("style"))
+                try:
+                    report = report.rstrip() + "\n" + style_report_block(check_style(result, style), style)
+                except Exception as exc:
+                    report = report.rstrip() + f"\n\nSTUDIO STYLE CHECK\n  could not run: {exc}\n"
             except Exception as exc:
                 status, errors = "FAIL", 1
                 bounds, struct, anim = "-", "-", "static"
@@ -1409,6 +1578,281 @@ class StudioStorage:
         return {"ok": True, "rawAiResponse": text}
 
 
+# ======================================================================
+# SHAPE STYLE CONTROLS
+# ----------------------------------------------------------------------
+# A declared budget on how elaborate an asset may be, and how varied its
+# forms are allowed to get. These are not hints: the numbers go into the
+# prompt as hard limits, and check_style() re-measures the compiled
+# document afterwards and reports anything that broke them. designbridge
+# is untouched - the enforcement lives here, in Studio's own lint layer,
+# and is reported separately from the compiler's own diagnostics.
+# ======================================================================
+
+STYLE_DEFAULTS = {
+    "complexity": 3,        # 1..5  overall budget
+    "symmetry": "none",     # none | mirror-x | mirror-z | radial
+    "proportions": "mixed",  # cubic | mixed | elongated
+    "detail": "medium",     # low | medium | high  (guidance only)
+    "enforce": True,        # report violations after compile
+}
+
+# Budgets per complexity step, per track.
+BUDGET = {
+    "model":   {1: (6, 2),  2: (12, 3), 3: (24, 5), 4: (40, 8), 5: (80, 14)},
+    "prop":    {1: (1, 1),  2: (2, 1),  3: (3, 2),  4: (5, 3),  5: (8, 4)},
+    "texture": {1: (3, 0),  2: (4, 0),  3: (6, 0),  4: (9, 0),  5: (14, 0)},
+}
+# Largest allowed long:short ratio on a single box.
+ASPECT_CAP = {"cubic": 2.0, "mixed": 4.0, "elongated": 0.0}  # 0 = uncapped
+
+DETAIL_NOTE = {
+    "low": "Read as a silhouette from ten blocks away. Big forms only, no trim.",
+    "medium": "Clear silhouette plus a few reading details. No fine filigree.",
+    "high": "Dense surface detail is welcome, as long as the budget above allows it.",
+}
+
+
+def normalize_style(raw) -> dict:
+    s = dict(STYLE_DEFAULTS)
+    if isinstance(raw, dict):
+        for k in s:
+            if k in raw and raw[k] is not None:
+                s[k] = raw[k]
+    try:
+        s["complexity"] = max(1, min(5, int(s["complexity"])))
+    except Exception:
+        s["complexity"] = 3
+    if s["symmetry"] not in ("none", "mirror-x", "mirror-z", "radial"):
+        s["symmetry"] = "none"
+    if s["proportions"] not in ASPECT_CAP:
+        s["proportions"] = "mixed"
+    if s["detail"] not in DETAIL_NOTE:
+        s["detail"] = "medium"
+    s["enforce"] = bool(s["enforce"])
+    return s
+
+
+def style_constraints_text(kind: str, style: dict) -> str:
+    """The style, written as limits a model can actually obey."""
+    s = normalize_style(style)
+    lvl = s["complexity"]
+    total, per = BUDGET.get(kind, BUDGET["model"])[lvl]
+    out = [f"SHAPE BUDGET - complexity {lvl} of 5. These are limits, not suggestions."]
+
+    if kind == "model":
+        out.append(f"  Use at most {total} boxes in the whole model, and at most {per} per bone.")
+        out.append("  If you need more shape than that, make the boxes smarter, not more numerous.")
+    elif kind == "prop":
+        out.append(f"  Use at most {total} solids and at most {per} profiles beyond the first.")
+    else:
+        out.append(f"  Use at most {total} layers.")
+
+    cap = ASPECT_CAP[s["proportions"]]
+    if kind in ("model", "prop"):
+        if s["proportions"] == "cubic":
+            out.append("  PROPORTIONS: cubic. Keep every box roughly chunky - its longest side")
+            out.append(f"  may be at most {cap:g}x its shortest. No thin plates, no long rods.")
+        elif s["proportions"] == "mixed":
+            out.append("  PROPORTIONS: mixed. Boxes may be elongated or slab-like up to")
+            out.append(f"  {cap:g}x long-to-short. Vary them; do not make everything a cube.")
+        else:
+            out.append("  PROPORTIONS: elongated. Any aspect ratio is allowed - thin plates,")
+            out.append("  long rods and wide slabs are all encouraged where they read well.")
+
+    if s["symmetry"] != "none" and kind in ("model", "prop"):
+        if s["symmetry"] == "mirror-x":
+            out.append("  SYMMETRY: mirror across X. Every shape placed left of centre must have")
+            out.append("  a matching shape the same distance right of centre. Centred shapes must")
+            out.append("  straddle x=0 evenly.")
+        elif s["symmetry"] == "mirror-z":
+            out.append("  SYMMETRY: mirror across Z, front to back, by the same rule.")
+        else:
+            out.append("  SYMMETRY: radial. Repeat the motif evenly around the vertical axis.")
+
+    out.append(f"  DETAIL: {s['detail']}. {DETAIL_NOTE[s['detail']]}")
+    return "\n".join(out)
+
+
+def _boxes_of(result) -> list:
+    """Every box as (bone_name, (x0,y0,z0), (x1,y1,z1))."""
+    out = []
+    doc = result.doc
+    if result.kind == "model":
+        bones = doc.bones.values() if isinstance(doc.bones, dict) else (doc.bones or [])
+        for bone in bones:
+            nm = getattr(bone, "name", "?")
+            for bx in getattr(bone, "boxes", []) or []:
+                a = tuple(getattr(bx, "lo", ()) or ())
+                b = tuple(getattr(bx, "hi", ()) or ())
+                if len(a) == 3 and len(b) == 3:
+                    lo = tuple(min(a[i], b[i]) for i in range(3))
+                    hi = tuple(max(a[i], b[i]) for i in range(3))
+                    out.append((nm, lo, hi))
+    return out
+
+
+def check_style(result, style: dict) -> list:
+    """Re-measure the compiled document against the declared style.
+
+    Returns a list of (severity, message, fix) for anything that broke the
+    budget. This is what makes the controls binding rather than decorative:
+    the model is told the limits, and then the limits are actually checked.
+    """
+    s = normalize_style(style)
+    if not s["enforce"]:
+        return []
+    kind = result.kind
+    lvl = s["complexity"]
+    total_cap, per_cap = BUDGET.get(kind, BUDGET["model"])[lvl]
+    issues = []
+
+    if kind == "model":
+        boxes = _boxes_of(result)
+        if len(boxes) > total_cap:
+            issues.append(("WARN",
+                f"complexity {lvl} allows {total_cap} boxes, this model has {len(boxes)}",
+                f"merge or remove {len(boxes) - total_cap} box(es), or raise complexity"))
+        per_bone = {}
+        for nm, _, _ in boxes:
+            per_bone[nm] = per_bone.get(nm, 0) + 1
+        for nm, n in sorted(per_bone.items()):
+            if n > per_cap:
+                issues.append(("WARN",
+                    f"bone '{nm}' has {n} boxes, complexity {lvl} allows {per_cap} per bone",
+                    f"simplify '{nm}' to {per_cap} box(es) or raise complexity"))
+
+        cap = ASPECT_CAP[s["proportions"]]
+        if cap:
+            for nm, lo, hi in boxes:
+                d = sorted(max(1e-6, hi[i] - lo[i]) for i in range(3))
+                ratio = d[2] / d[0]
+                if ratio > cap + 1e-6:
+                    issues.append(("WARN",
+                        f"box in '{nm}' is {ratio:.1f}x long-to-short, '{s['proportions']}' allows {cap:g}x",
+                        "even out that box's proportions, or set proportions to elongated"))
+                    break   # one is enough; the model gets the point
+
+        if s["symmetry"] in ("mirror-x", "mirror-z"):
+            ax = 0 if s["symmetry"] == "mirror-x" else 2
+            def key(lo, hi):
+                return tuple(round(v, 2) for v in (lo + hi))
+            have = {}
+            for nm, lo, hi in boxes:
+                have[key(lo, hi)] = have.get(key(lo, hi), 0) + 1
+            unmatched = 0
+            for nm, lo, hi in boxes:
+                mlo = list(lo); mhi = list(hi)
+                mlo[ax], mhi[ax] = -hi[ax], -lo[ax]
+                if have.get(key(tuple(mlo), tuple(mhi)), 0) == 0:
+                    unmatched += 1
+            if unmatched:
+                issues.append(("WARN",
+                    f"{unmatched} box(es) have no {s['symmetry']} counterpart",
+                    f"mirror them across {'X' if ax == 0 else 'Z'}, or set symmetry to none"))
+
+    elif kind == "prop":
+        n = len(getattr(result.doc, "parts", []) or [])
+        if n > total_cap:
+            issues.append(("WARN",
+                f"complexity {lvl} allows {total_cap} part(s), this design has {n}",
+                f"combine parts, or raise complexity"))
+
+    else:  # texture
+        n = len(getattr(result.doc, "layers", []) or [])
+        if n > total_cap:
+            issues.append(("WARN",
+                f"complexity {lvl} allows {total_cap} layers, this texture has {n}",
+                "merge layers, or raise complexity"))
+
+    return issues
+
+
+def style_report_block(issues: list, style: dict) -> str:
+    """Render the style findings to append to the compiler's own report."""
+    s = normalize_style(style)
+    head = (f"STUDIO STYLE CHECK - complexity {s['complexity']}/5, "
+            f"{s['proportions']} proportions, symmetry {s['symmetry']}, {s['detail']} detail")
+    if not s["enforce"]:
+        return f"\n{head}\n  (enforcement off - not checked)\n"
+    if not issues:
+        return f"\n{head}\n  PASS: within budget.\n"
+    lines = [f"\n{head}", f"  {len(issues)} style issue(s) - these are budget warnings, not compiler errors:"]
+    for sev, msg, fix in issues:
+        lines.append(f"  [{sev}] {msg}")
+        lines.append(f"         FIX: {fix}")
+    return "\n".join(lines) + "\n"
+
+
+SYSTEM_CONTEXT = """ABOUT THIS SYSTEM - read this before anything else
+
+You are the design half of a two-part pipeline that produces real, usable game
+assets. You write a short text document. A compiler called designbridge turns
+that document into actual geometry and image files.
+
+      you write a document  ->  designbridge compiles it  ->  real asset files
+             ^                                                      |
+             |            a text report comes back  <---------------+
+
+WHY YOU WRITE A DOCUMENT AND NOT GEOMETRY
+  You cannot see the result, so you cannot tell a sealed mesh from a broken
+  one. The compiler can. So the work is split: you decide INTENT - which parts
+  exist, how big they are, where they sit, what colour they are - and the
+  compiler decides every vertex, triangle and winding order. A line that says
+  `box from=(-4,0,-2) to=(4,12,2)` cannot produce a broken mesh, because it is
+  not a mesh. It is a description the compiler builds correctly by construction.
+
+  So: never write vertices, triangle lists, indices, matrices or per-face
+  coordinates. Never write code, JSON, XML or SVG. Never invent syntax. Write
+  only the document grammar you are given, exactly as specified.
+
+IF NO GRAMMAR IS ATTACHED TO THIS MESSAGE
+  This briefing describes the system and deliberately contains no grammar and
+  no shape budget. Those arrive with each task prompt, together with the brief,
+  a worked example and the output contract. If you are reading this with no
+  grammar attached, say so and wait for the task prompt - do not infer a
+  grammar from the examples in this text, and do not guess at syntax.
+
+HOW YOU FIND OUT WHAT YOU ACTUALLY MADE
+  Every compile returns a text report. It gives PASS or FAIL, the measured
+  bounding box, how many parts were built, whether the mesh is watertight, and
+  for each problem a line number, the root cause and a concrete fix. It also
+  includes rough ASCII silhouettes from the front, side and top.
+
+  That report is your eyes. Read it before changing anything. Fix what it
+  names, in the order it names them, and resend the whole document. A human is
+  watching a real 3D render of the same asset, so the report and the render
+  always agree - if the report says watertight, it is watertight.
+
+THE THREE KINDS OF ASSET
+  model    a rigged blocky/voxel object - bones, boxes, keyframe animation.
+           Characters, mobs, machines, anything with moving parts.
+  prop     a CAD solid swept from a 2D profile - revolve, extrude, loft.
+           Vessels, tools, furniture; anything turned or extruded.
+  texture  a layered procedural pixel texture plus a material map.
+           Block faces, surfaces, tiles.
+  You are told which kind you are writing. Use that grammar and no other.
+
+WHAT COMES OUT THE OTHER END
+  model    .glb (binary glTF 2.0, including your animations), .obj,
+           .boxmodel.json (engine-native: bones, pivots, cubes, colours),
+           plus a rendered .png preview
+  prop     .glb, .obj, .stl, an .svg of the 2D profiles, .png preview
+  texture  .png, a 16x upscaled .png, a _material.png packing normal into RG,
+           metallic into B and roughness into A, plus a .recipe.json
+
+  These files load in Blender, three.js, Godot, Unity and custom Java/OpenGL
+  engines. The numbers you choose are real dimensions in a real scene, so
+  treat them as real: a 32-unit-tall model is a 32-block-tall character.
+
+HOW TO WORK
+  Change one thing per round. Keep whatever already passes. Always send the
+  COMPLETE document - never a patch, a diff, or "the rest is unchanged". Stay
+  inside the shape budget you are given; it is checked after every compile.
+  If the report shows an error, fixing it comes before adding anything new.
+"""
+
+
 def build_engineered_prompt(payload):
     """Build the full engineered prompt with the real compiler in designbridge.py.
 
@@ -1434,6 +1878,7 @@ def build_engineered_prompt(payload):
     branch = (payload.get("branch") or "").strip()
     include_report = bool(payload.get("includeReport", True))
     full_dsl = bool(payload.get("fullDsl", False))
+    want_context = payload.get("context", True) is not False
     runnable = bool(payload.get("runnable", False))
 
     if mode == "fix":
@@ -1445,6 +1890,24 @@ def build_engineered_prompt(payload):
 
     contract = ""
     marker = "OUTPUT CONTRACT"
+    # designbridge's own contract asks for <<<DESIGN ... >>>. Models mangle
+    # those brackets - stripping them, or emitting an empty "<<>>" - so the
+    # contract is rewritten here to ask for a plain fenced block instead.
+    # designbridge itself is left untouched; only the prompt text is adjusted,
+    # and the extractor accepts either form on the way back in.
+    NEW_CONTRACT = (
+        "OUTPUT CONTRACT - follow exactly\n"
+        "  1. First, in at most four short lines, state your plan: what the asset is,\n"
+        "     its palette or parts, and its overall size.\n"
+        "  2. Then the whole source in ONE fenced code block and nothing else:\n"
+        "        ```\n"
+        "        <the complete document, starting with its first keyword>\n"
+        "        ```\n"
+        "  3. Nothing after the closing fence. Send the WHOLE source every round -\n"
+        "     never a patch, never a fragment, never a diff.\n"
+        "  Do not wrap the source in angle brackets or any other marker. The fence\n"
+        "  alone is the delimiter.\n"
+    )
     if HAS_DESIGNBRIDGE and db_core is not None:
         try:
             base = db_core.prompt_for(kind, brief, runnable=runnable)
@@ -1485,6 +1948,10 @@ def build_engineered_prompt(payload):
                 "  work, change one thing per round, and resend the whole document - never a patch."
             )
 
+    # The shape budget goes in as hard limits, and is re-measured after the
+    # compile, so it binds rather than merely suggesting.
+    extra.append(style_constraints_text(kind, payload.get("style")))
+
     if full_dsl:
         extra.append(
             "REMINDER\n"
@@ -1496,6 +1963,12 @@ def build_engineered_prompt(payload):
     # Insert the round context just before the output contract so the contract
     # stays the last thing the model reads, but preserve everything after it
     # (texture/model prompts add a "WHAT HAPPENS NEXT" or runnable section).
+    # The system briefing goes first: a model that understands what the
+    # pipeline does with its text writes better documents than one dropped
+    # straight into a grammar reference.
+    if want_context:
+        base = SYSTEM_CONTEXT.rstrip() + "\n\n" + ("=" * 70) + "\n\n" + base.lstrip()
+
     if addition and marker in base:
         head, tail = base.split(marker, 1)
         text = head.rstrip() + "\n\n" + addition + "\n\n" + marker + tail
@@ -1503,6 +1976,25 @@ def build_engineered_prompt(payload):
         text = base.rstrip() + "\n\n" + addition
     else:
         text = base
+
+    # Swap designbridge's sentinel contract for the fenced-block one. The
+    # original runs from "OUTPUT CONTRACT" to the next blank-line-separated
+    # heading, so replace exactly that span and keep whatever follows.
+    # The worked example inside designbridge's prompt also wraps its source in
+    # the sentinels. Convert those to fences too, so every example the model
+    # reads demonstrates the format it is being asked to produce.
+    text = re.sub(r"(?m)^([ \t]*)<<<[ \t]*DESIGN[ \t]*$", r"\1```", text)
+    text = re.sub(r"(?m)^([ \t]*)>>>[ \t]*$", r"\1```", text)
+
+    if marker in text:
+        head, rest = text.split(marker, 1)
+        after = ""
+        m = re.search(r"\n\n(?=[A-Z][A-Z0-9 _/&-]{3,}\n)", rest)
+        if m:
+            after = rest[m.start():]
+        text = head + NEW_CONTRACT.rstrip() + after
+    else:
+        text = text.rstrip() + "\n\n" + NEW_CONTRACT.rstrip()
 
     return {"ok": True, "kind": kind, "mode": mode, "prompt": text, "length": len(text)}
 
@@ -1552,8 +2044,22 @@ def make_handler(storage: StudioStorage, html_path: Path):
                             + "\nPass --ui <path> to point at it."
                         )
                         return self._send_bytes(message.encode("utf-8"), "text/plain; charset=utf-8", 404)
+                    html = target.read_text(encoding="utf-8")
+                    # Point the two library tags at vendor/ when the operator
+                    # has put copies there, so the Studio needs no internet.
+                    for marker, local in (("<!--DB_TAILWIND-->", "tailwind.js"),
+                                          ("<!--DB_THREE-->", "three.min.js")):
+                        if marker not in html:
+                            continue
+                        if not any((root / "vendor" / local).is_file()
+                                   for root in (Path.cwd(), SCRIPT_DIR, target.parent)):
+                            continue
+                        html = re.sub(
+                            r'<script src="https://[^"]+"></script>(?=' + re.escape(marker) + ')',
+                            f'<script src="/vendor/{local}"></script>',
+                            html, count=1)
                     return self._send_bytes(
-                        target.read_bytes(),
+                        html.encode("utf-8"),
                         "text/html; charset=utf-8",
                         200,
                         {"Cache-Control": "no-store"},
@@ -1571,6 +2077,10 @@ def make_handler(storage: StudioStorage, html_path: Path):
 
                 if path == "/api/settings":
                     return self._send_json({"ok": True, "settings": storage.get_settings()})
+
+                if path == "/api/context":
+                    return self._send_json({"ok": True, "context": SYSTEM_CONTEXT,
+                                             "length": len(SYSTEM_CONTEXT)})
 
                 if path.startswith("/vendor/"):
                     # Optional offline libraries. If the operator has dropped

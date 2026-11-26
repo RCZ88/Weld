@@ -9,22 +9,14 @@
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
 
-<!-- Vendored first, CDN second.
-     Drop tailwind.js and three.min.js into a vendor/ folder next to this file
-     and the Studio runs with no internet at all — matching the backend, which
-     has no dependencies either. Without the folder these fall back to the CDN. -->
-<script src="vendor/tailwind.js"></script>
-<script>
-  if (typeof tailwind === 'undefined') {
-    document.write('<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"><\/script>');
-  }
-</script>
-<script src="vendor/three.min.js"></script>
-<script>
-  if (typeof THREE === 'undefined') {
-    document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>');
-  }
-</script>
+<!-- Libraries. Drop tailwind.js and three.min.js into a vendor/ folder next to
+     this file and studio_server.py rewrites these two tags to point there, so
+     the Studio runs with no internet at all — matching the backend, which has
+     no dependencies either. Without that folder these load from the CDN.
+     (Deliberately plain script tags: document.write-injected cross-origin
+     scripts get blocked by Chrome on slow connections.) -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script><!--DB_TAILWIND-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script><!--DB_THREE-->
 <script id="tailwind-config">
   tailwind.config = {
     darkMode: "class",
@@ -119,6 +111,72 @@
     background: rgba(0, 0, 0, 0.6);
     border: 1px solid rgba(255, 255, 255, 0.08);
     box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
+
+  /* ===================================================================
+   * FORM FIELDS — must come out dark with light text.
+   * The Tailwind CDN injects its stylesheet at runtime, after this block,
+   * and its forms plugin sets `background-color: #fff` on [type=...] and
+   * textarea at the same specificity as a class. That beat .recessed-well
+   * and produced white text on a white field in every input in the app.
+   * These rules are deliberately forceful so no later sheet can win.
+   * =================================================================== */
+  input[type="text"], input[type="password"], input[type="number"],
+  input[type="search"], input[type="email"], input[type="url"],
+  textarea, select {
+    background-color: rgba(0, 0, 0, 0.6) !important;
+    background-image: none !important;
+    color: #f4f4f5 !important;
+    -webkit-text-fill-color: #f4f4f5;
+    caret-color: #ffffff;
+    border-color: rgba(255, 255, 255, 0.12);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  input[type="text"]:focus, input[type="password"]:focus, input[type="number"]:focus,
+  textarea:focus, select:focus {
+    outline: none !important;
+    border-color: rgba(255, 255, 255, 0.4) !important;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6), 0 0 0 2px rgba(255, 255, 255, 0.12) !important;
+    background-color: rgba(0, 0, 0, 0.72) !important;
+  }
+  input::placeholder, textarea::placeholder {
+    color: #71717a !important;
+    -webkit-text-fill-color: #71717a;
+    opacity: 1;
+  }
+  /* Native dropdown list on a dark UI */
+  select option { background-color: #15171d; color: #f4f4f5; }
+  /* Checkboxes stay legible and show their checked state clearly */
+  input[type="checkbox"] {
+    background-color: rgba(0, 0, 0, 0.6) !important;
+    border-color: rgba(255, 255, 255, 0.28) !important;
+    color: #f4f4f5;
+  }
+  input[type="checkbox"]:checked {
+    background-color: #f4f4f5 !important;
+    border-color: #f4f4f5 !important;
+  }
+  ::selection { background: rgba(255, 255, 255, 0.26); color: #ffffff; }
+
+  /* Range sliders — the forms plugin restyles these too, so pin them down */
+  input[type="range"] {
+    -webkit-appearance: none; appearance: none;
+    height: 6px; border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.12) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 14px; height: 14px; border-radius: 9999px;
+    background: #f4f4f5; border: 1px solid rgba(0, 0, 0, 0.4);
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
+    cursor: grab;
+  }
+  input[type="range"]::-webkit-slider-thumb:active { cursor: grabbing; transform: scale(1.12); }
+  input[type="range"]::-moz-range-thumb {
+    width: 14px; height: 14px; border-radius: 9999px;
+    background: #f4f4f5; border: 1px solid rgba(0, 0, 0, 0.4);
   }
 
   /* Precision scrollbars */
@@ -463,29 +521,159 @@
             <span class="material-symbols-outlined text-[13px]">build</span><span>FIX ERR</span>
           </button>
         </div>
-        <div class="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-white/[0.03] border border-white/[0.06] font-mono text-[9px]">
-          <span class="text-zinc-300 truncate" id="mode-helper-text">—</span>
-          <div class="flex items-center gap-2 shrink-0 ml-2">
-            <label class="flex items-center gap-1 cursor-pointer text-zinc-400 hover:text-white" title="Attach the compiler report to the prompt">
-              <input checked="" class="rounded bg-black/60 border-white/20 text-zinc-300 focus:ring-0 w-3 h-3" id="ctx-include-report" type="checkbox"/><span>RPT</span>
-            </label>
-            <label class="flex items-center gap-1 cursor-pointer text-zinc-400 hover:text-white" title="Append the grammar reminder">
-              <input class="rounded bg-black/60 border-white/20 text-zinc-300 focus:ring-0 w-3 h-3" id="ctx-full-dsl" type="checkbox"/><span>SPEC</span>
-            </label>
+        <!-- What the selected mode does — stated plainly, with a real example -->
+        <div class="p-2.5 rounded-xl bg-white/[0.04] border border-white/[0.1] flex flex-col gap-2">
+          <div class="flex items-start justify-between gap-2">
+            <div class="flex items-start gap-2 min-w-0">
+              <span class="material-symbols-outlined text-[16px] text-white shrink-0 mt-px" id="mode-icon">edit_note</span>
+              <div class="flex flex-col gap-0.5 min-w-0">
+                <span class="font-mono text-[11px] text-white font-bold leading-tight" id="mode-title">—</span>
+                <span class="font-mono text-[9.5px] text-zinc-300 leading-relaxed" id="mode-helper-text">—</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 shrink-0 font-mono text-[9px]">
+              <label class="flex items-center gap-1 cursor-pointer text-zinc-400 hover:text-white" title="Explain the whole system to the AI first — what the pipeline is, why it writes a document instead of geometry, what files come out. Leave on for a fresh chat.">
+                <input checked="" class="rounded focus:ring-0 w-3 h-3" id="ctx-system" type="checkbox"/><span>BRIEF</span>
+              </label>
+              <label class="flex items-center gap-1 cursor-pointer text-zinc-400 hover:text-white" title="Attach the compiler report to the prompt">
+                <input checked="" class="rounded focus:ring-0 w-3 h-3" id="ctx-include-report" type="checkbox"/><span>RPT</span>
+              </label>
+              <label class="flex items-center gap-1 cursor-pointer text-zinc-400 hover:text-white" title="Append the grammar reminder">
+                <input class="rounded focus:ring-0 w-3 h-3" id="ctx-full-dsl" type="checkbox"/><span>SPEC</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- keeps / produces, so the difference between modes is unmissable -->
+          <div class="grid grid-cols-2 gap-1.5">
+            <div class="px-2 py-1.5 rounded-lg bg-black/40 border border-white/[0.06] flex flex-col gap-0.5">
+              <span class="font-mono text-[8px] text-zinc-500 uppercase tracking-wider">Your current design</span>
+              <span class="font-mono text-[9.5px] font-semibold" id="mode-keeps">—</span>
+            </div>
+            <div class="px-2 py-1.5 rounded-lg bg-black/40 border border-white/[0.06] flex flex-col gap-0.5">
+              <span class="font-mono text-[8px] text-zinc-500 uppercase tracking-wider">You get back</span>
+              <span class="font-mono text-[9.5px] font-semibold text-zinc-200" id="mode-gives">—</span>
+            </div>
+          </div>
+
+          <div class="px-2.5 py-2 rounded-lg bg-black/50 border border-white/[0.08] flex flex-col gap-1.5">
+            <div class="flex items-center justify-between">
+              <span class="font-mono text-[8px] text-zinc-400 uppercase tracking-wider">Example request for this mode</span>
+              <button class="font-mono text-[8.5px] font-bold text-white px-2 py-0.5 rounded bg-white/15 hover:bg-white/25 border border-white/20 tactile-btn" id="mode-example-use" title="Put this example into your request box">USE THIS</button>
+            </div>
+            <span class="font-mono text-[10px] text-zinc-200 italic leading-relaxed" id="mode-example">—</span>
           </div>
         </div>
       </div>
 
       <div class="flex-1 overflow-y-auto space-y-3 py-3 pr-1 min-h-0" id="workbench-scroll">
-        <!-- Operator instruction bubble -->
-        <div class="p-3 bg-black/40 border border-white/[0.08] shadow-glass-well flex flex-col gap-1.5 rounded-2xl">
+        <!-- SHAPE CONTROLS — a declared budget, enforced after every compile -->
+        <div class="p-3.5 glass-card-item rounded-2xl flex flex-col gap-3" id="shape-card">
           <div class="flex items-center justify-between">
-            <span class="font-mono text-[9px] font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
-              <span class="w-1.5 h-1.5 rounded-full bg-zinc-300"></span>OPERATOR INSTRUCTION
-            </span>
-            <span class="font-mono text-[8px] text-zinc-400 bg-white/[0.06] px-1.5 py-0.5 rounded" id="operator-scope">—</span>
+            <div class="flex items-center gap-2">
+              <span class="material-symbols-outlined text-[14px] text-zinc-300">tune</span>
+              <span class="font-mono text-[10px] font-semibold text-white uppercase tracking-wide">SHAPE CONTROLS</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <label class="flex items-center gap-1 cursor-pointer font-mono text-[8px] text-zinc-400 hover:text-white" title="Check the compiled design against this budget">
+                <input class="rounded focus:ring-0 w-3 h-3" id="style-enforce" type="checkbox" checked=""/><span>ENFORCE</span>
+              </label>
+              <button class="font-mono text-[8px] text-zinc-400 hover:text-white underline" id="style-reset" title="Back to defaults">RESET</button>
+            </div>
           </div>
-          <p class="font-mono text-xs text-zinc-200 leading-relaxed italic bg-white/[0.02] p-2.5 rounded-xl border border-white/[0.05]" id="operator-instruction">—</p>
+
+          <!-- Complexity budget -->
+          <div class="flex flex-col gap-1">
+            <div class="flex items-center justify-between">
+              <span class="font-mono text-[9px] text-zinc-300 uppercase">Complexity</span>
+              <span class="font-mono text-[9px] font-bold text-white" id="style-complexity-label">3 / 5</span>
+            </div>
+            <input type="range" min="1" max="5" step="1" value="3" id="style-complexity"
+                   class="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-white/10 accent-white"/>
+            <span class="font-mono text-[8px] text-zinc-500 leading-snug" id="style-complexity-hint">—</span>
+          </div>
+
+          <!-- Proportions: how far shapes may stray from plain cubes -->
+          <div class="flex flex-col gap-1">
+            <span class="font-mono text-[9px] text-zinc-300 uppercase">Proportions — how far from plain cubes</span>
+            <div class="grid grid-cols-3 gap-1 p-0.5 rounded-xl recessed-well">
+              <button class="style-prop py-1 rounded-lg font-mono text-[9px] tactile-btn" data-prop="cubic">CUBIC</button>
+              <button class="style-prop py-1 rounded-lg font-mono text-[9px] tactile-btn" data-prop="mixed">MIXED</button>
+              <button class="style-prop py-1 rounded-lg font-mono text-[9px] tactile-btn" data-prop="elongated">FREE</button>
+            </div>
+            <span class="font-mono text-[8px] text-zinc-500 leading-snug" id="style-prop-hint">—</span>
+          </div>
+
+          <!-- Symmetry -->
+          <div class="flex flex-col gap-1">
+            <span class="font-mono text-[9px] text-zinc-300 uppercase">Symmetry</span>
+            <div class="grid grid-cols-4 gap-1 p-0.5 rounded-xl recessed-well">
+              <button class="style-sym py-1 rounded-lg font-mono text-[8.5px] tactile-btn" data-sym="none">NONE</button>
+              <button class="style-sym py-1 rounded-lg font-mono text-[8.5px] tactile-btn" data-sym="mirror-x">MIRROR X</button>
+              <button class="style-sym py-1 rounded-lg font-mono text-[8.5px] tactile-btn" data-sym="mirror-z">MIRROR Z</button>
+              <button class="style-sym py-1 rounded-lg font-mono text-[8.5px] tactile-btn" data-sym="radial">RADIAL</button>
+            </div>
+          </div>
+
+          <!-- Detail (guidance only — say so plainly) -->
+          <div class="flex flex-col gap-1">
+            <div class="flex items-center justify-between">
+              <span class="font-mono text-[9px] text-zinc-300 uppercase">Detail</span>
+              <span class="font-mono text-[8px] text-zinc-500">guidance only</span>
+            </div>
+            <div class="grid grid-cols-3 gap-1 p-0.5 rounded-xl recessed-well">
+              <button class="style-detail py-1 rounded-lg font-mono text-[9px] tactile-btn" data-detail="low">LOW</button>
+              <button class="style-detail py-1 rounded-lg font-mono text-[9px] tactile-btn" data-detail="medium">MEDIUM</button>
+              <button class="style-detail py-1 rounded-lg font-mono text-[9px] tactile-btn" data-detail="high">HIGH</button>
+            </div>
+          </div>
+
+          <div class="px-2 py-1.5 rounded-lg bg-black/40 border border-white/[0.05] font-mono text-[8px] text-zinc-400 leading-relaxed" id="style-summary">—</div>
+        </div>
+
+        <!-- YOUR REQUEST — editable at any time, never locked.
+             This textarea is the single source of truth for the instruction:
+             editing it recompiles the prompt, and it is saved per asset. -->
+        <div class="p-3 bg-black/40 border border-white/[0.1] shadow-glass-well flex flex-col gap-2 rounded-2xl">
+          <div class="flex items-center justify-between gap-2">
+            <span class="font-mono text-[9px] font-semibold text-zinc-200 uppercase tracking-wider flex items-center gap-1.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-zinc-200"></span>YOUR REQUEST
+              <span class="text-zinc-500 font-normal normal-case tracking-normal">— edit freely</span>
+            </span>
+            <div class="flex items-center gap-1 shrink-0">
+              <span class="font-mono text-[8px] text-zinc-400 bg-white/[0.06] px-1.5 py-0.5 rounded border border-white/10" id="operator-scope">—</span>
+              <button class="font-mono text-[8px] text-zinc-400 hover:text-white px-1.5 py-0.5 rounded hover:bg-white/10 tactile-btn" id="instruction-clear" title="Clear the request">CLEAR</button>
+            </div>
+          </div>
+
+          <textarea id="operator-instruction" rows="3" spellcheck="false"
+            class="w-full p-2.5 rounded-xl recessed-well font-mono text-xs leading-relaxed resize-y min-h-[58px]"
+            placeholder="Describe what you want changed — e.g. make the arms reach past the knees and add a glowing red visor. Edit this as much as you like; the prompt rebuilds as you type."></textarea>
+
+          <!-- Scope chip: an edit can be aimed at one component -->
+          <div class="hidden items-center gap-1.5 px-2 py-1 rounded-lg bg-white/[0.05] border border-white/10" id="scope-row">
+            <span class="material-symbols-outlined text-[12px] text-zinc-300">center_focus_strong</span>
+            <span class="font-mono text-[9px] text-zinc-300">scoped to</span>
+            <span class="font-mono text-[9px] font-bold text-white" id="scope-name">—</span>
+            <button class="ml-auto font-mono text-[8px] text-zinc-400 hover:text-white underline" id="scope-clear">CLEAR SCOPE</button>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button class="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-full bg-white/15 hover:bg-white/25 border border-white/20 text-white font-mono text-[10px] font-semibold tactile-btn" id="instruction-apply">
+              <span class="material-symbols-outlined text-[13px]">autorenew</span><span>REBUILD PROMPT</span>
+            </button>
+            <span class="font-mono text-[8px] text-zinc-500 shrink-0" id="instruction-state">saved</span>
+          </div>
+        </div>
+
+        <!-- COMPONENTS — click one to aim the next edit at it -->
+        <div class="p-3 glass-card-item rounded-2xl flex flex-col gap-2" id="components-card">
+          <div class="flex items-center justify-between">
+            <span class="font-mono text-[9px] font-semibold text-zinc-300 uppercase tracking-wider">COMPONENTS</span>
+            <span class="font-mono text-[8px] text-zinc-500" id="components-count">—</span>
+          </div>
+          <div class="flex flex-col gap-1 max-h-40 overflow-y-auto pr-0.5" id="components-list"></div>
+          <p class="font-mono text-[8px] text-zinc-500 leading-snug">Click a component here or in the viewport to isolate it and scope your request to it.</p>
         </div>
 
         <!-- Step 1: compiled prompt -->
@@ -502,13 +690,17 @@
               <span class="material-symbols-outlined text-[13px] text-zinc-400">code</span>
               <span id="dsl-toggle-label">PEEK PROMPT</span>
             </button>
-            <button class="flex items-center justify-center gap-1.5 py-1.5 px-4 rounded-full bg-white/15 hover:bg-white/25 border border-white/20 text-white font-mono text-[10px] font-semibold shadow-sm tactile-btn" id="copy-dsl-btn">
-              <span class="material-symbols-outlined text-[13px]">content_copy</span><span>COPY</span>
+            <button class="flex items-center justify-center gap-1.5 py-1.5 px-4 rounded-full bg-white/15 hover:bg-white/25 border border-white/20 text-white font-mono text-[10px] font-semibold shadow-sm tactile-btn" id="copy-dsl-btn" title="Copy the complete prompt — briefing, grammar, shape budget, example and output contract. This is the one to paste.">
+              <span class="material-symbols-outlined text-[13px]">content_copy</span><span>COPY FULL</span>
             </button>
             <button class="flex items-center justify-center gap-1 py-1.5 px-3 rounded-full bg-white/[0.06] hover:bg-white/[0.14] border border-white/10 text-zinc-300 hover:text-white font-mono text-[10px] font-semibold tactile-btn" id="run-llm-btn" title="Send the prompt straight to your configured model">
               <span class="material-symbols-outlined text-[13px]">bolt</span><span id="run-llm-label">RUN AI</span>
             </button>
           </div>
+          <button class="w-full flex items-center justify-center gap-1.5 py-1 rounded-full bg-white/[0.04] hover:bg-white/[0.1] border border-white/[0.08] font-mono text-[9px] text-zinc-400 hover:text-white tactile-btn" id="copy-context-btn" title="Copy only the system briefing — paste it once at the top of a long chat, then untick BRIEF to keep later prompts short">
+            <span class="material-symbols-outlined text-[12px]">menu_book</span>
+            <span>COPY BRIEFING ONLY (no grammar)</span>
+          </button>
           <pre class="hidden p-2.5 rounded-xl recessed-well font-mono text-[10px] leading-relaxed overflow-x-auto text-zinc-300 whitespace-pre-wrap max-h-48 overflow-y-auto" id="prompt-peek-well"></pre>
         </div>
 
@@ -570,8 +762,8 @@
       <div class="pt-2 border-t border-white/[0.08] flex flex-col gap-2">
         <div class="flex items-center gap-1.5 overflow-x-auto pb-0.5" id="quick-chips-row"></div>
         <div class="flex items-center gap-2">
-          <input class="flex-1 px-3.5 py-1.5 rounded-full recessed-well font-mono text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-white/30 transition-colors" id="prompt-input" placeholder="Prompt modification..." type="text"/>
-          <button class="px-3.5 py-1.5 rounded-full bg-white/15 hover:bg-white/25 border border-white/20 text-white font-mono text-xs font-semibold tactile-btn" id="build-prompt-btn">GEN</button>
+          <input class="flex-1 px-3.5 py-1.5 rounded-full recessed-well font-mono text-xs transition-colors" id="prompt-input" placeholder="Quick add to your request…" type="text"/>
+          <button class="px-3.5 py-1.5 rounded-full bg-white/15 hover:bg-white/25 border border-white/20 text-white font-mono text-xs font-semibold tactile-btn" id="build-prompt-btn" title="Append this line to your request above">ADD</button>
         </div>
       </div>
     </div>
@@ -701,6 +893,12 @@
       </button>
       <button class="w-7 h-7 rounded-full bg-white/[0.06] hover:bg-white/[0.14] border border-white/10 flex items-center justify-center text-zinc-400 hover:text-white tactile-btn" id="cam-autorotate" title="Auto rotate (R)">
         <span class="material-symbols-outlined text-[15px]">360</span>
+      </button>
+      <button class="w-7 h-7 rounded-full bg-white/[0.06] hover:bg-white/[0.14] border border-white/10 flex items-center justify-center text-zinc-400 hover:text-white tactile-btn" id="cam-floor" title="Toggle the floor grid (G)">
+        <span class="material-symbols-outlined text-[15px]">grid_on</span>
+      </button>
+      <button class="w-7 h-7 rounded-full bg-white/[0.06] hover:bg-white/[0.14] border border-white/10 flex items-center justify-center text-zinc-400 hover:text-white tactile-btn" id="cam-reset" title="Reset the view (F)">
+        <span class="material-symbols-outlined text-[15px]">recenter</span>
       </button>
     </div>
 
@@ -1065,12 +1263,13 @@
       leftCollapsed: false, rightCollapsed: false,
       orthoCollapsed: false, dockCollapsed: false,
       activeProjectId: null, activeMode: 'edit', activeRightTab: 'workbench',
-      autoFork: false, includeReport: true, fullDslSpec: false,
-      wireframe: false, autoRotate: false, cameraPreset: 'iso',
+      autoFork: false, includeReport: true, fullDslSpec: false, systemContext: true,
+      wireframe: false, autoRotate: false, cameraPreset: 'iso', showFloor: true,
       llmEnabled: false, llmProvider: 'ollama',
       llmEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
       llmModel: 'qwen2.5-coder:7b', llmApiKey: '', llmAutoCompile: true,
     },
+    styles: {},
     projects: {},
   };
 
@@ -1096,6 +1295,7 @@
     API.workspaceDir = boot.workspaceDir || '';
     state.projects = boot.projects;
     if (boot.settings) Object.assign(state.settings, boot.settings);
+    if (boot.settings && boot.settings.styles) state.styles = boot.settings.styles;
 
     const s = state.settings;
     if (s.activeProjectId && state.projects[s.activeProjectId]) state.activeProjectId = s.activeProjectId;
@@ -1119,10 +1319,15 @@
       document.getElementById('toggle-autofork').checked = !!s.autoFork;
       document.getElementById('ctx-include-report').checked = s.includeReport !== false;
       document.getElementById('ctx-full-dsl').checked = !!s.fullDslSpec;
+      document.getElementById('ctx-system').checked = s.systemContext !== false;
       wireframe = !!s.wireframe;
       markToggle('cam-wireframe', wireframe);
       autoRotate = !!s.autoRotate;
       markToggle('cam-autorotate', autoRotate);
+      showFloor = s.showFloor !== false;
+      markToggle('cam-floor', showFloor);
+      if (gridMajor) gridMajor.visible = showFloor;
+      if (gridSub) gridSub.visible = showFloor;
       if (s.cameraPreset) setCameraPreset(s.cameraPreset, true);
       if (s.activeRightTab) switchRightTab(s.activeRightTab, true);
     }
@@ -1369,6 +1574,12 @@
       </div>`;
   }
 
+  let wireframe = false, autoRotate = false, isPlaying = true, showFloor = true;
+  let animTime = 0, animDuration = 0.5;
+  let modelRadius = 20, modelCentreY = 5;
+  let partMeshes = {};        // component name -> THREE.Mesh
+  let selectedPart = null;    // the component an edit is currently scoped to
+
   let gridMajor = null, gridSub = null;
   function buildGrid(span) {
     [gridMajor, gridSub].forEach(g => {
@@ -1381,13 +1592,12 @@
     gridSub = new THREE.GridHelper(span, Math.max(10, Math.round(span)), 0x27272a, 0x14161f);
     gridMajor.position.y = -0.02;
     gridSub.position.y = -0.04;
+    gridMajor.visible = showFloor;
+    gridSub.visible = showFloor;
     scene.add(gridMajor); scene.add(gridSub);
   }
   if (HAS3D) buildGrid(50);
 
-  let wireframe = false, autoRotate = false, isPlaying = true;
-  let animTime = 0, animDuration = 0.5;
-  let modelRadius = 20;
 
   function clearStage() {
     if (!HAS3D) return;
@@ -1404,43 +1614,89 @@
     }
   }
 
-  /** Build a mesh from the server's real triangle soup. */
-  function buildRealMesh(payload) {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(payload.positions, 3));
-    if (payload.colors && payload.colors.length === payload.positions.length) {
-      geo.setAttribute('color', new THREE.Float32BufferAttribute(payload.colors, 3));
+  /** Convert the document's own axes into viewer axes (+Y up).
+   *  designbridge revolves props about Z, so a prop document is Z-up while a
+   *  voxel model is Y-up. Treating everything as Y-up laid props on their
+   *  side and left the floor grid slicing straight through them. */
+  function toViewerAxes(positions, up) {
+    if (up !== 'z') return positions.slice();
+    const out = new Array(positions.length);
+    for (let i = 0; i < positions.length; i += 3) {
+      out[i]     = positions[i];        // x stays
+      out[i + 1] = positions[i + 2];    // z becomes up
+      out[i + 2] = -positions[i + 1];   // y becomes depth
     }
-    geo.computeVertexNormals();
-    geo.computeBoundingBox();
+    return out;
+  }
 
-    const mat = new THREE.MeshStandardMaterial({
-      vertexColors: !!geo.getAttribute('color'),
-      color: geo.getAttribute('color') ? 0xffffff : 0xc8ccd4,
-      roughness: 0.42, metalness: 0.3,
-      wireframe,
-      side: THREE.DoubleSide,
-    });
-    const mesh = new THREE.Mesh(geo, mat);
-
+  /** Build the asset from the server's real triangles, one mesh per
+   *  component so a part can be highlighted and picked. */
+  function buildRealMesh(payload) {
+    const pos = toViewerAxes(payload.positions, payload.up);
+    const col = payload.colors || [];
     const grp = new THREE.Group();
-    grp.add(mesh);
-    // Precision CAD edge overlay
-    try {
-      const edges = new THREE.EdgesGeometry(geo, 18);
-      grp.add(new THREE.LineSegments(edges, new THREE.LineBasicMaterial({
-        color: 0xffffff, transparent: true, opacity: 0.15,
-      })));
-    } catch {}
 
-    // Centre the asset on the origin and sit it on the grid
-    const bb = geo.boundingBox;
-    const cx = (bb.min.x + bb.max.x) / 2;
-    const cz = (bb.min.z + bb.max.z) / 2;
-    grp.position.set(-cx, -bb.min.y, -cz);
+    // Work out the whole-asset extents in viewer axes.
+    let mnx = Infinity, mny = Infinity, mnz = Infinity;
+    let mxx = -Infinity, mxy = -Infinity, mxz = -Infinity;
+    for (let i = 0; i < pos.length; i += 3) {
+      mnx = Math.min(mnx, pos[i]);     mxx = Math.max(mxx, pos[i]);
+      mny = Math.min(mny, pos[i + 1]); mxy = Math.max(mxy, pos[i + 1]);
+      mnz = Math.min(mnz, pos[i + 2]); mxz = Math.max(mxz, pos[i + 2]);
+    }
+    if (!isFinite(mnx)) { modelRadius = 20; modelCentreY = 5; return grp; }
 
-    const size = new THREE.Vector3().subVectors(bb.max, bb.min);
-    modelRadius = Math.max(size.x, size.y, size.z) || 20;
+    // Centre on X/Z and seat the asset on the floor so the grid reads as
+    // ground rather than a plane cutting through the middle of it.
+    const offX = -(mnx + mxx) / 2, offY = -mny, offZ = -(mnz + mxz) / 2;
+
+    const groups = (payload.groups && payload.groups.length)
+      ? payload.groups
+      : [{ name: 'asset', kind: 'all', start: 0, count: pos.length / 9 }];
+
+    partMeshes = {};
+    groups.forEach(g => {
+      const a = g.start * 9, b = (g.start + g.count) * 9;
+      const slice = pos.slice(a, b);
+      if (!slice.length) return;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(slice, 3));
+      if (col.length >= b) {
+        geo.setAttribute('color', new THREE.Float32BufferAttribute(col.slice(a, b), 3));
+      }
+      geo.computeVertexNormals();
+      geo.computeBoundingBox();
+
+      const mat = new THREE.MeshStandardMaterial({
+        vertexColors: !!geo.getAttribute('color'),
+        color: geo.getAttribute('color') ? 0xffffff : 0xc8ccd4,
+        roughness: 0.42, metalness: 0.28,
+        wireframe, side: THREE.DoubleSide,
+        transparent: true, opacity: 1,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.name = g.name;
+      mesh.userData.part = g.name;
+
+      const sub = new THREE.Group();
+      sub.add(mesh);
+      try {
+        const edges = new THREE.EdgesGeometry(geo, 18);
+        const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({
+          color: 0xffffff, transparent: true, opacity: 0.15,
+        }));
+        sub.add(line);
+        mesh.userData.edges = line;
+      } catch {}
+      sub.position.set(offX, offY, offZ);
+      sub.userData.part = g.name;
+      grp.add(sub);
+      partMeshes[g.name] = mesh;
+    });
+
+    const sx = mxx - mnx, sy = mxy - mny, sz = mxz - mnz;
+    modelRadius = Math.max(sx, sy, sz) || 20;
+    modelCentreY = sy / 2;
     return grp;
   }
 
@@ -1462,7 +1718,9 @@
     const lines = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.18 }));
     lines.position.y = 7;
     grp.add(lines);
-    modelRadius = 20;
+    modelRadius = 14;
+    modelCentreY = 7;
+    partMeshes = {};
     if (px) tex.repeat.set(1, 1);
     return grp;
   }
@@ -1478,19 +1736,14 @@
     box.position.y = 5;
     grp.add(box);
     modelRadius = 14;
+    modelCentreY = 5;
+    partMeshes = {};
     return grp;
   }
 
   function fitGrid() {
     if (!HAS3D) return;
     buildGrid(Math.max(24, Math.ceil(modelRadius * 2.2 / 10) * 10));
-  }
-
-  let camDist = 60;
-  function frameCamera(preset) {
-    if (!HAS3D) return;
-    camDist = Math.max(18, modelRadius * 2.6);
-    setCameraPreset(preset || state.settings.cameraPreset || 'iso', true);
   }
 
   /** Pull the real mesh for the active revision and put it on the stage. */
@@ -1517,63 +1770,145 @@
     state.mesh = payload;
 
     if (HAS3D) {
-      if (payload && payload.ok && payload.kind === 'texture') {
-        assetRoot.add(buildTexturePlane(API.BASE + payload.preview, payload.size));
-      } else if (payload && payload.ok && payload.positions && payload.positions.length) {
-        assetRoot.add(buildRealMesh(payload));
-      } else {
-        assetRoot.add(buildFailureMarker());
+      // A driver or WebGL fault here must not take the Studio down with it:
+      // the report, the blueprints and the exports do not depend on it.
+      try {
+        if (payload && payload.ok && payload.kind === 'texture') {
+          assetRoot.add(buildTexturePlane(API.BASE + payload.preview, payload.size));
+        } else if (payload && payload.ok && payload.positions && payload.positions.length) {
+          assetRoot.add(buildRealMesh(payload));
+        } else {
+          assetRoot.add(buildFailureMarker());
+        }
+        fitGrid();
+        resetView(true);
+      } catch (err) {
+        console.warn('3D stage failed for this revision:', err.message);
       }
-      fitGrid();
-      frameCamera();
     }
     renderOrthoBlueprints();
+    renderComponents();
+    updateScopeRow();
     updateHardwarePanel();
   }
 
-  /* --- Orbit, zoom, presets ------------------------------------------- */
-  let dragging = false, prev = { x: 0, y: 0 };
-  vp.addEventListener('pointerdown', e => { dragging = true; prev = { x: e.clientX, y: e.clientY }; });
-  window.addEventListener('pointerup', () => { dragging = false; });
+  /* --- ORBIT CAMERA ----------------------------------------------------
+   * The old build rotated the asset itself on two axes at once, which rolls
+   * the horizon and tilts everything diagonally — there was no way to get
+   * back to level. This is a standard turntable instead: the asset never
+   * moves, the camera orbits it. Azimuth wraps freely, pitch is clamped just
+   * short of the poles so the view can never flip, and up is always +Y.
+   * Left-drag orbits, right/middle-drag pans, wheel zooms at the target.
+   * ------------------------------------------------------------------- */
+  const orb = {
+    az: Math.PI * 0.25,   // horizontal angle
+    el: Math.PI * 0.30,   // polar angle from +Y, clamped below
+    dist: 60,
+    target: { x: 0, y: 0, z: 0 },
+  };
+  const EL_MIN = 0.08, EL_MAX = Math.PI - 0.08;
+
+  function applyCamera() {
+    if (!HAS3D) return;
+    try { _applyCamera(); } catch (err) { console.warn('camera update failed:', err.message); }
+  }
+  function _applyCamera() {
+    orb.el = Math.max(EL_MIN, Math.min(EL_MAX, orb.el));
+    orb.dist = Math.max(modelRadius * 0.25, Math.min(modelRadius * 20, orb.dist));
+    const se = Math.sin(orb.el), ce = Math.cos(orb.el);
+    camera.position.set(
+      orb.target.x + orb.dist * se * Math.sin(orb.az),
+      orb.target.y + orb.dist * ce,
+      orb.target.z + orb.dist * se * Math.cos(orb.az),
+    );
+    camera.up.set(0, 1, 0);           // horizon stays level, always
+    camera.lookAt(orb.target.x, orb.target.y, orb.target.z);
+    const yaw = ((orb.az * 180 / Math.PI) % 360 + 360) % 360;
+    const pitch = 90 - orb.el * 180 / Math.PI;
+    const rx = document.getElementById('hud-rot-x');
+    const ry = document.getElementById('hud-rot-y');
+    if (rx) rx.textContent = pitch.toFixed(1) + '°';
+    if (ry) ry.textContent = yaw.toFixed(1) + '°';
+  }
+
+  let drag = null;
+  vp.addEventListener('contextmenu', e => e.preventDefault());
+  vp.addEventListener('pointerdown', e => {
+    if (!HAS3D) return;
+    vp.setPointerCapture?.(e.pointerId);
+    const pan = e.button === 1 || e.button === 2 || e.shiftKey;
+    drag = { x: e.clientX, y: e.clientY, pan, moved: 0 };
+    vp.style.cursor = pan ? 'move' : 'grabbing';
+  });
+  function endDrag(e) {
+    if (!drag) return;
+    // A click that barely moved is a selection, not an orbit.
+    if (drag.moved < 5 && !drag.pan) pickAt(e);
+    drag = null;
+    vp.style.cursor = '';
+  }
+  window.addEventListener('pointerup', endDrag);
+  window.addEventListener('pointercancel', () => { drag = null; vp.style.cursor = ''; });
   window.addEventListener('pointermove', e => {
-    if (!dragging) return;
-    assetRoot.rotation.y += (e.clientX - prev.x) * 0.007;
-    assetRoot.rotation.x += (e.clientY - prev.y) * 0.004;
-    document.getElementById('hud-rot-x').textContent = (assetRoot.rotation.x * 57.2958).toFixed(1) + '°';
-    document.getElementById('hud-rot-y').textContent = (assetRoot.rotation.y * 57.2958).toFixed(1) + '°';
-    prev = { x: e.clientX, y: e.clientY };
+    if (!drag || !HAS3D) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    drag.moved += Math.abs(dx) + Math.abs(dy);
+    if (drag.pan) {
+      // Pan across the camera's own screen plane, scaled to the zoom level.
+      const k = orb.dist * 0.0022;
+      const sinA = Math.sin(orb.az), cosA = Math.cos(orb.az);
+      orb.target.x -= (dx * cosA - dy * Math.cos(orb.el) * sinA) * k;
+      orb.target.z -= (-dx * sinA - dy * Math.cos(orb.el) * cosA) * k;
+      orb.target.y += dy * Math.sin(orb.el) * k;
+    } else {
+      orb.az -= dx * 0.006;
+      orb.el -= dy * 0.006;
+    }
+    drag.x = e.clientX; drag.y = e.clientY;
+    applyCamera();
   });
   vp.addEventListener('wheel', e => {
+    if (!HAS3D) return;
     e.preventDefault();
-    camDist *= e.deltaY > 0 ? 1.07 : 0.93;
-    camDist = Math.max(modelRadius * 0.6, Math.min(modelRadius * 12, camDist));
-    setCameraPreset(state.settings.cameraPreset || 'iso', true);
+    orb.dist *= e.deltaY > 0 ? 1.1 : 0.9;
+    applyCamera();
   }, { passive: false });
 
-  const CAM_DIRS = {
-    iso: [0.62, 0.42, 0.78], front: [0, 0.08, 1], side: [1, 0.08, 0], top: [0, 1, 0.001],
+  // Exact angles, so a named view is always the same view.
+  const CAM_VIEWS = {
+    iso:   { az: Math.PI * 0.25, el: Math.PI * 0.30 },
+    front: { az: 0,              el: Math.PI * 0.5 },
+    side:  { az: Math.PI * 0.5,  el: Math.PI * 0.5 },
+    top:   { az: 0,              el: EL_MIN },
   };
   function setCameraPreset(key, silent = false) {
-    if (!HAS3D) { if (!silent) syncSettings({ cameraPreset: key }); return; }
-    const dir = CAM_DIRS[key] || CAM_DIRS.iso;
-    const len = Math.hypot(...dir) || 1;
-    const look = new THREE.Vector3(0, modelRadius * 0.35, 0);
-    camera.position.set(
-      look.x + (dir[0] / len) * camDist,
-      look.y + (dir[1] / len) * camDist,
-      look.z + (dir[2] / len) * camDist,
-    );
-    camera.lookAt(look);
+    if (!silent) syncSettings({ cameraPreset: key });
     document.querySelectorAll('.cam-btn').forEach(b => {
       const on = b.dataset.cam === key;
       b.className = on
         ? 'cam-btn px-3 py-1 rounded-full font-mono text-[10px] font-semibold bg-white/20 text-white border border-white/25 shadow-sm tactile-btn'
         : 'cam-btn px-3 py-1 rounded-full font-mono text-[10px] font-medium text-zinc-400 hover:text-zinc-200 tactile-btn';
     });
-    if (!silent) syncSettings({ cameraPreset: key });
+    if (!HAS3D) return;
+    const v = CAM_VIEWS[key] || CAM_VIEWS.iso;
+    orb.az = v.az; orb.el = v.el;
+    applyCamera();
   }
   document.querySelectorAll('.cam-btn').forEach(b =>
     b.addEventListener('click', () => { state.settings.cameraPreset = b.dataset.cam; setCameraPreset(b.dataset.cam); }));
+
+  /** Frame the whole asset: centre the target on it and back off to fit. */
+  function resetView(keepAngle = true) {
+    if (!HAS3D) return;
+    orb.target = { x: 0, y: modelCentreY, z: 0 };
+    orb.dist = modelRadius * 2.4;
+    if (!keepAngle) { orb.az = CAM_VIEWS.iso.az; orb.el = CAM_VIEWS.iso.el; }
+    applyCamera();
+  }
+  document.getElementById('cam-reset').addEventListener('click', () => {
+    resetView(false);
+    toast('VIEW RESET', 'Back to the framed isometric view');
+  });
 
   /* --- Scrubber & playback -------------------------------------------- */
   const scrubber = document.getElementById('timeline-scrubber');
@@ -1608,6 +1943,13 @@
     markToggle('cam-autorotate', autoRotate);
     syncSettings({ autoRotate });
   });
+  document.getElementById('cam-floor').addEventListener('click', () => {
+    showFloor = !showFloor;
+    markToggle('cam-floor', showFloor);
+    if (gridMajor) gridMajor.visible = showFloor;
+    if (gridSub) gridSub.visible = showFloor;
+    syncSettings({ showFloor });
+  });
 
   /* --- Render loop ----------------------------------------------------- */
   let lastFrame = performance.now(), frames = 0, fpsLast = performance.now(), frameMs = 0;
@@ -1629,7 +1971,7 @@
       animTime = (animTime + dt) % animDuration;
       updateScrubberUI();
     }
-    if (autoRotate) assetRoot.rotation.y += dt * 0.5;
+    if (autoRotate) { orb.az += dt * 0.45; applyCamera(); }
     renderer.render(scene, camera);
   }
   requestAnimationFrame(animate);
@@ -1761,6 +2103,108 @@
     }).join('');
   }
 
+  /* =====================================================================
+   * COMPONENT SELECTION
+   * A design is edited part by part, so a part has to be nameable. Clicking
+   * one in the viewport or the list dims the rest, shows its measurements,
+   * and scopes the next request to it by name.
+   * ===================================================================== */
+  const raycaster = (typeof THREE !== 'undefined' && THREE.Raycaster) ? new THREE.Raycaster() : null;
+
+  function pickAt(e) {
+    if (!HAS3D || !raycaster || !e) return;
+    const r = renderer.domElement.getBoundingClientRect();
+    const ndc = {
+      x: ((e.clientX - r.left) / r.width) * 2 - 1,
+      y: -((e.clientY - r.top) / r.height) * 2 + 1,
+    };
+    try {
+      raycaster.setFromCamera(ndc, camera);
+      const hits = raycaster.intersectObjects(Object.values(partMeshes), true);
+      if (hits.length) {
+        const nm = hits[0].object.userData.part || hits[0].object.name;
+        selectPart(nm === selectedPart ? null : nm);
+      } else {
+        selectPart(null);
+      }
+    } catch {}
+  }
+
+  function selectPart(name) {
+    selectedPart = name || null;
+    // Dim everything that is not the selection; full strength when nothing is.
+    Object.entries(partMeshes).forEach(([nm, mesh]) => {
+      const on = !selectedPart || nm === selectedPart;
+      if (mesh.material) {
+        mesh.material.opacity = on ? 1 : 0.16;
+        mesh.material.transparent = !on;
+      }
+      if (mesh.userData.edges) {
+        mesh.userData.edges.material.opacity = on ? (selectedPart ? 0.55 : 0.15) : 0.04;
+      }
+    });
+    renderComponents();
+    updateScopeRow();
+    refreshPromptPreview();
+  }
+
+  function updateScopeRow() {
+    const row = document.getElementById('scope-row');
+    const nm = document.getElementById('scope-name');
+    const scope = document.getElementById('operator-scope');
+    const c = getActiveCommit();
+    if (selectedPart) {
+      row.classList.remove('hidden');
+      row.classList.add('flex');
+      nm.textContent = selectedPart;
+    } else {
+      row.classList.add('hidden');
+      row.classList.remove('flex');
+    }
+    if (scope && c) {
+      scope.textContent = selectedPart
+        ? `${selectedPart.toUpperCase()}`
+        : `${c.tag} · WHOLE ASSET`;
+    }
+  }
+
+  function renderComponents() {
+    const card = document.getElementById('components-card');
+    const list = document.getElementById('components-list');
+    const count = document.getElementById('components-count');
+    const m = state.mesh;
+    const groups = (m && m.ok && m.groups) || [];
+    if (!groups.length) {
+      card.classList.add('hidden');
+      return;
+    }
+    card.classList.remove('hidden');
+    const label = groups[0].kind === 'bone' ? 'bones' : 'parts';
+    count.textContent = `${groups.length} ${label}`;
+    list.innerHTML = groups.map(g => {
+      const on = g.name === selectedPart;
+      const bx = g.box;
+      const dims = bx
+        ? [0, 1, 2].map(i => Math.round((bx[1][i] - bx[0][i]) * 100) / 100).join('×')
+        : '—';
+      return `
+        <button class="comp-row w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg border text-left tactile-btn ${on ? 'bg-white/15 border-white/25' : 'bg-white/[0.03] border-white/[0.07] hover:bg-white/[0.08]'}" data-comp="${escapeHtml(g.name)}">
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span class="material-symbols-outlined text-[12px] ${on ? 'text-white' : 'text-zinc-500'}">${g.kind === 'bone' ? 'skeleton' : 'deployed_code'}</span>
+            <span class="font-mono text-[10px] ${on ? 'text-white font-semibold' : 'text-zinc-300'} truncate">${escapeHtml(g.name)}</span>
+            ${g.parent ? `<span class="font-mono text-[8px] text-zinc-500 shrink-0">← ${escapeHtml(g.parent)}</span>` : ''}
+          </div>
+          <span class="font-mono text-[8px] text-zinc-500 shrink-0">${escapeHtml(dims)}</span>
+        </button>`;
+    }).join('');
+    list.querySelectorAll('.comp-row').forEach(b => b.addEventListener('click', () => {
+      const nm = b.dataset.comp;
+      selectPart(nm === selectedPart ? null : nm);
+    }));
+  }
+
+  document.getElementById('scope-clear').addEventListener('click', () => selectPart(null));
+
   function updateHardwarePanel() {
     const p = getActiveProject();
     const m = state.mesh;
@@ -1792,15 +2236,26 @@
   async function buildEngineeredPrompt() {
     const p = getActiveProject(); const c = getActiveCommit();
     if (!p || !c) return '';
+    // A scoped edit names its target, so the model changes that component and
+    // leaves the rest of the document alone.
+    let instruction = state.lastInstruction || '';
+    if (selectedPart && state.activeMode !== 'new_take') {
+      const kindWord = (state.mesh && state.mesh.groups && state.mesh.groups[0]
+        && state.mesh.groups[0].kind === 'bone') ? 'bone' : 'part';
+      instruction = `Change only the ${kindWord} "${selectedPart}". Leave every other `
+        + `${kindWord} exactly as it is.\n${instruction}`;
+    }
     const payload = {
       kind: p.track,
       mode: state.activeMode,
-      instruction: state.lastInstruction || '',
+      instruction,
       dsl: c.dsl || '',
       report: c.report || '',
       name: p.name, tag: c.tag, branch: c.branch,
       includeReport: document.getElementById('ctx-include-report').checked,
       fullDsl: document.getElementById('ctx-full-dsl').checked,
+      context: document.getElementById('ctx-system').checked,
+      style: activeStyle(),
     };
     if (API.LIVE) {
       try {
@@ -1888,6 +2343,155 @@
     }).join('');
   }
 
+  /* What each mode does, with a worked example per track, so it is obvious
+   * which one to reach for. Shown under the mode switcher. */
+  const MODE_INFO = {
+    edit: {
+      title: 'EDIT — adjust what you already have',
+      icon: 'edit_note',
+      keeps: 'kept and modified',
+      keepsClass: 'text-emerald-300',
+      gives: 'the same asset, changed',
+      example: {
+        model: 'Make the arms reach past the knees and add a glowing red visor across the head.',
+        prop: 'Thicken the wall to 3mm and raise the body to 110mm.',
+        texture: 'Add heavier rust pitting and make the veins stronger.',
+      },
+    },
+    new_take: {
+      title: 'NEW TAKE — throw it away and start fresh',
+      icon: 'auto_awesome',
+      keeps: 'discarded entirely',
+      keepsClass: 'text-amber-300',
+      gives: 'a brand-new asset',
+      example: {
+        model: 'A squat four-legged beetle drone, dark carapace, two amber sensor eyes.',
+        prop: 'A wide shallow bowl, 140mm across, 40mm tall, 3mm wall.',
+        texture: 'Mossy cobblestone: grey stone with green moss in the cracks.',
+      },
+    },
+    fix: {
+      title: 'FIX — repair the errors, change nothing else',
+      icon: 'build',
+      keeps: 'kept, errors repaired',
+      keepsClass: 'text-emerald-300',
+      gives: 'the same asset, compiling',
+      example: {
+        model: 'Give every box real thickness and reconnect the pivots to their parents.',
+        prop: 'Close the profile so the solid is watertight.',
+        texture: 'Correct the layer names the compiler rejected.',
+      },
+    },
+  };
+
+  /* =====================================================================
+   * SHAPE CONTROLS
+   * A declared budget on how elaborate and how varied an asset may be.
+   * The numbers go into the prompt as hard limits and the server
+   * re-measures the compiled result against them, so these are binding
+   * rather than decorative. Stored per asset.
+   * ===================================================================== */
+  const STYLE_DEFAULT = {
+    complexity: 3, symmetry: 'none', proportions: 'mixed', detail: 'medium', enforce: true,
+  };
+  const CX_HINT = {
+    model: {
+      1: 'Up to 6 boxes total, 2 per bone — a bold, readable silhouette.',
+      2: 'Up to 12 boxes, 3 per bone — simple shapes with a little articulation.',
+      3: 'Up to 24 boxes, 5 per bone — the usual mob: clear forms, some detail.',
+      4: 'Up to 40 boxes, 8 per bone — elaborate armour, greebles, layered plates.',
+      5: 'Up to 80 boxes, 14 per bone — a boss. Expensive to render and to edit.',
+    },
+    prop: {
+      1: 'A single solid.', 2: 'Two solids.', 3: 'Three solids, two extra profiles.',
+      4: 'Five solids — handles, spouts, feet.', 5: 'Eight solids — an assembly.',
+    },
+    texture: {
+      1: 'Up to 3 layers — flat colour and one pattern.',
+      2: 'Up to 4 layers.', 3: 'Up to 6 layers — the usual block texture.',
+      4: 'Up to 9 layers — rich surface.', 5: 'Up to 14 layers — very busy.',
+    },
+  };
+  const PROP_HINT = {
+    cubic: 'Every box stays chunky — at most 2:1 long-to-short. No plates or rods.',
+    mixed: 'Boxes may be slab-like or elongated up to 4:1. The usual choice.',
+    elongated: 'No limit on proportions — thin plates, long rods, wide slabs allowed.',
+  };
+
+  function activeStyle() {
+    const p = getActiveProject();
+    if (!p) return { ...STYLE_DEFAULT };
+    state.styles = state.styles || {};
+    if (!state.styles[p.id]) state.styles[p.id] = { ...STYLE_DEFAULT };
+    return state.styles[p.id];
+  }
+
+  function renderStyleControls() {
+    const p = getActiveProject();
+    const card = document.getElementById('shape-card');
+    if (!p) { card.classList.add('hidden'); return; }
+    card.classList.remove('hidden');
+    const s = activeStyle();
+
+    document.getElementById('style-complexity').value = String(s.complexity);
+    document.getElementById('style-complexity-label').textContent = `${s.complexity} / 5`;
+    document.getElementById('style-complexity-hint').textContent =
+      (CX_HINT[p.track] || CX_HINT.model)[s.complexity] || '';
+    document.getElementById('style-enforce').checked = !!s.enforce;
+
+    const isShape = p.track !== 'texture';
+    document.getElementById('style-prop-hint').textContent = isShape
+      ? PROP_HINT[s.proportions]
+      : 'Proportions and symmetry apply to models and props, not textures.';
+
+    const mark = (sel, attr, val) => document.querySelectorAll(sel).forEach(b => {
+      const on = b.dataset[attr] === val;
+      b.className = b.className.replace(/\s*(bg-white\/20|text-white|font-bold|text-zinc-400|font-medium)/g, '');
+      b.className += on ? ' bg-white/20 text-white font-bold' : ' text-zinc-400 font-medium';
+      b.disabled = !isShape && (attr === 'prop' || attr === 'sym');
+      b.style.opacity = b.disabled ? '0.35' : '';
+    });
+    mark('.style-prop', 'prop', s.proportions);
+    mark('.style-sym', 'sym', s.symmetry);
+    mark('.style-detail', 'detail', s.detail);
+
+    const bits = [`complexity ${s.complexity}/5`];
+    if (isShape) {
+      bits.push(`${s.proportions} proportions`);
+      if (s.symmetry !== 'none') bits.push(s.symmetry);
+    }
+    bits.push(`${s.detail} detail`);
+    document.getElementById('style-summary').textContent =
+      (s.enforce ? 'Enforced after every compile — ' : 'Not enforced (prompt guidance only) — ') + bits.join(' · ') + '.';
+  }
+
+  let styleTimer = null;
+  async function setStyle(patch) {
+    const p = getActiveProject(); if (!p) return;
+    Object.assign(activeStyle(), patch);
+    renderStyleControls();
+    if (styleTimer) clearTimeout(styleTimer);
+    styleTimer = setTimeout(async () => {
+      syncSettings({ styles: state.styles });
+      await refreshPromptPreview();
+    }, 250);
+  }
+
+  document.getElementById('style-complexity').addEventListener('input', e =>
+    setStyle({ complexity: parseInt(e.target.value, 10) }));
+  document.querySelectorAll('.style-prop').forEach(b =>
+    b.addEventListener('click', () => setStyle({ proportions: b.dataset.prop })));
+  document.querySelectorAll('.style-sym').forEach(b =>
+    b.addEventListener('click', () => setStyle({ symmetry: b.dataset.sym })));
+  document.querySelectorAll('.style-detail').forEach(b =>
+    b.addEventListener('click', () => setStyle({ detail: b.dataset.detail })));
+  document.getElementById('style-enforce').addEventListener('change', e =>
+    setStyle({ enforce: e.target.checked }));
+  document.getElementById('style-reset').addEventListener('click', () => {
+    setStyle({ ...STYLE_DEFAULT });
+    toast('SHAPE CONTROLS RESET', 'Back to complexity 3, mixed proportions, no symmetry');
+  });
+
   /* =====================================================================
    * I. MAIN RENDER
    * ===================================================================== */
@@ -1972,7 +2576,9 @@
         if (e.target.closest('.proj-act-btn')) return;
         state.activeProjectId = el.dataset.proj;
         state.branchFilter = 'ALL';
+        selectedPart = null;
         syncSettings({ activeProjectId: state.activeProjectId });
+        state.lastInstruction = loadInstruction();
         renderAll(); rebuildStage(); refreshPromptPreview();
       });
     });
@@ -2060,11 +2666,25 @@
       fix: `Repairing <span class="text-red-300">${escapeHtml(c.tag)}</span> · injects compiler diagnostics`,
     };
     document.getElementById('mode-helper-text').innerHTML = helper[state.activeMode];
+    const mi = MODE_INFO[state.activeMode];
+    document.getElementById('mode-title').textContent = mi.title;
+    document.getElementById('mode-icon').textContent = mi.icon;
+    const keeps = document.getElementById('mode-keeps');
+    keeps.textContent = mi.keeps;
+    keeps.className = `font-mono text-[9.5px] font-semibold ${mi.keepsClass}`;
+    document.getElementById('mode-gives').textContent = mi.gives;
+    document.getElementById('mode-example').textContent = mi.example[p.track] || mi.example.model;
+    renderStyleControls();
     document.getElementById('step1-title').textContent =
       ({ edit: `EDIT PROMPT (${c.tag})`, new_take: 'NEW TAKE PROMPT', fix: `REPAIR PROMPT (${c.tag})` })[state.activeMode];
-    document.getElementById('operator-instruction').textContent =
-      state.lastInstruction ? `"${state.lastInstruction}"` : '(no instruction yet — type one in the bar below and press GEN)';
-    document.getElementById('operator-scope').textContent = `${c.tag} ${state.activeMode.toUpperCase().replace('_', ' ')}`;
+
+    // The request box is the user's own text — only overwrite it when the
+    // value genuinely differs, so typing is never interrupted mid-keystroke.
+    const instEl = document.getElementById('operator-instruction');
+    if (document.activeElement !== instEl && instEl.value !== (state.lastInstruction || '')) {
+      instEl.value = state.lastInstruction || '';
+    }
+    updateScopeRow();
 
     document.getElementById('dsl-well').innerHTML = highlightDsl(c.dsl);
     document.getElementById('well-kind-tag').textContent = `${p.track.toUpperCase()} // ${c.tag}`;
@@ -2212,6 +2832,7 @@
       const boot = await apiCall('/api/checkout', { method: 'POST', body: JSON.stringify({ projectId: p.id, commitId: cid }) });
       applyBootstrapState(boot);
       state.selectedDagCommitId = cid;
+      selectedPart = null;
       renderAll(); await rebuildStage(); await refreshPromptPreview();
       if (!quiet) toast('CHECKED OUT', `${p.name} → ${target.tag} (${target.branch})`);
     } catch (err) { toast('CHECKOUT FAILED', err.message, 'err'); }
@@ -2390,6 +3011,7 @@
           mode: state.activeMode,
           note: note || state.lastInstruction.slice(0, 52) || 'Compiled revision',
           autoFork: document.getElementById('toggle-autofork').checked,
+          style: activeStyle(),
           thumbnail: captureThumbnail(),
         }),
       });
@@ -2472,6 +3094,25 @@
   document.getElementById('toggle-autofork').addEventListener('change', e => syncSettings({ autoFork: e.target.checked }));
   document.getElementById('ctx-include-report').addEventListener('change', async e => { syncSettings({ includeReport: e.target.checked }); await refreshPromptPreview(); });
   document.getElementById('ctx-full-dsl').addEventListener('change', async e => { syncSettings({ fullDslSpec: e.target.checked }); await refreshPromptPreview(); });
+  document.getElementById('ctx-system').addEventListener('change', async e => {
+    syncSettings({ systemContext: e.target.checked });
+    await refreshPromptPreview();
+    toast(e.target.checked ? 'BRIEFING ON' : 'BRIEFING OFF',
+      e.target.checked ? 'The AI is told what the system is and what files come out'
+                       : 'Shorter prompt — only do this if the AI was already briefed',
+      e.target.checked ? 'ok' : 'warn');
+  });
+
+  // Copy the briefing on its own, for pasting once into a long-running chat.
+  document.getElementById('copy-context-btn').addEventListener('click', async () => {
+    if (!requireServer()) return;
+    try {
+      const r = await apiCall('/api/context');
+      await navigator.clipboard.writeText(r.context);
+      toast('BRIEFING COPIED',
+        `${r.length.toLocaleString()} chars. This has NO grammar — paste it first, then send a full prompt (COPY FULL) for the AI to work from.`, 'warn');
+    } catch (err) { toast('COPY FAILED', err.message, 'err'); }
+  });
 
   document.getElementById('toggle-dsl-btn').addEventListener('click', () => {
     const well = document.getElementById('prompt-peek-well');
@@ -2507,19 +3148,86 @@
     finally { btn.disabled = false; lbl.textContent = 'RUN AI'; }
   });
 
-  async function applyPromptBuild() {
-    const inp = document.getElementById('prompt-input');
-    if (inp.value.trim()) state.lastInstruction = inp.value.trim();
-    inp.value = '';
+  /* --- The request box: editable at all times -------------------------
+   * The old build captured the instruction once from the bottom bar, cleared
+   * it, and then displayed it as read-only text — so the request could never
+   * be revised. Now the textarea *is* the instruction: it is saved per asset
+   * as you type and the prompt rebuilds behind it.
+   * ------------------------------------------------------------------- */
+  const instEl = document.getElementById('operator-instruction');
+  const instState = document.getElementById('instruction-state');
+  let instTimer = null;
+
+  function instructionKey() {
+    const p = getActiveProject();
+    return p ? `designbridge.instruction.${p.id}` : null;
+  }
+  function saveInstruction() {
+    const k = instructionKey();
+    if (k) { try { localStorage.setItem(k, state.lastInstruction || ''); } catch {} }
+  }
+  function loadInstruction() {
+    const k = instructionKey();
+    if (!k) return '';
+    try { return localStorage.getItem(k) || ''; } catch { return ''; }
+  }
+
+  instEl.addEventListener('input', () => {
+    state.lastInstruction = instEl.value;
+    instState.textContent = 'editing…';
+    if (instTimer) clearTimeout(instTimer);
+    instTimer = setTimeout(async () => {
+      saveInstruction();
+      await refreshPromptPreview();
+      instState.textContent = 'saved · prompt rebuilt';
+      setTimeout(() => { if (instState.textContent.startsWith('saved')) instState.textContent = 'saved'; }, 1800);
+    }, 450);
+  });
+  // Ctrl/Cmd+Enter rebuilds immediately
+  instEl.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); applyInstruction(); }
+  });
+
+  async function applyInstruction() {
+    state.lastInstruction = instEl.value;
+    saveInstruction();
     renderAll();
     await refreshPromptPreview();
     const well = document.getElementById('prompt-peek-well');
     well.classList.remove('hidden');
     document.getElementById('dsl-toggle-label').textContent = 'HIDE PROMPT';
-    toast('PROMPT COMPILED', API.LIVE ? 'Full grammar and reasoning ladder included — ready to copy' : 'Offline fallback only — start the server for the real prompt', API.LIVE ? 'ok' : 'warn');
+    instState.textContent = 'saved';
+    toast('PROMPT REBUILT',
+      API.LIVE ? `${(state.promptText || '').length.toLocaleString()} chars — ready to copy`
+               : 'Offline fallback only — start the server for the real prompt',
+      API.LIVE ? 'ok' : 'warn');
   }
-  document.getElementById('build-prompt-btn').addEventListener('click', applyPromptBuild);
-  document.getElementById('prompt-input').addEventListener('keydown', e => { if (e.key === 'Enter') applyPromptBuild(); });
+  document.getElementById('instruction-apply').addEventListener('click', applyInstruction);
+  document.getElementById('instruction-clear').addEventListener('click', async () => {
+    instEl.value = ''; state.lastInstruction = '';
+    saveInstruction(); await refreshPromptPreview();
+    instState.textContent = 'cleared';
+    instEl.focus();
+  });
+  document.getElementById('mode-example-use').addEventListener('click', async () => {
+    const p = getActiveProject(); if (!p) return;
+    const ex = MODE_INFO[state.activeMode].example[p.track] || MODE_INFO[state.activeMode].example.model;
+    instEl.value = ex;
+    await applyInstruction();
+  });
+
+  // The bottom bar now APPENDS to the request instead of replacing it.
+  async function appendToRequest() {
+    const inp = document.getElementById('prompt-input');
+    const add = inp.value.trim();
+    if (!add) { instEl.focus(); return; }
+    const cur = instEl.value.trim();
+    instEl.value = cur ? `${cur}\n${add}` : add;
+    inp.value = '';
+    await applyInstruction();
+  }
+  document.getElementById('build-prompt-btn').addEventListener('click', appendToRequest);
+  document.getElementById('prompt-input').addEventListener('keydown', e => { if (e.key === 'Enter') appendToRequest(); });
 
   document.getElementById('paste-clipboard-btn').addEventListener('click', async () => {
     try {
@@ -2530,9 +3238,9 @@
   document.getElementById('paste-sample-btn').addEventListener('click', () => {
     const p = getActiveProject(); if (!p) return;
     const samples = {
-      model: `Here is the revision with a heavier torso and a visor:\n<<<DESIGN\nmodel "${p.name}"\nbone torso pivot=(0,0,0)\n  box from=(-6,10,-4) to=(6,24,4) color=#2d323f\nbone head pivot=(0,24,0) parent=torso\n  box from=(-4,24,-4) to=(4,32,4) color=#1e222b\n  box from=(-4,27,-4.5) to=(4,29,-4) color=#ef4444\nbone left_arm pivot=(-6,23,0) parent=torso\n  box from=(-9,4,-2) to=(-6,23,2) color=#1e222b\nbone right_arm pivot=(6,23,0) parent=torso\n  box from=(6,4,-2) to=(9,23,2) color=#1e222b\n>>>`,
-      prop: `Thicker wall and a taller body:\n<<<DESIGN\ndesign "${p.name}" units=mm\n\nprofile shell\n  path (0,0) (24,0) (24,60) (24-$wall.thick,60) (24-$wall.thick,$wall.thick) (0,$wall.thick)\n\nsolid body from=shell revolve segments=64\n\nassembly\n  part body at=(0,0,0)\n>>>`,
-      texture: `More pitting and stronger veins:\n<<<DESIGN\ntexture "${p.name}" size=16 metallic=0.6 roughness=0.75\nfill color=#52525b\nnoise dark=#3f3f466a light=#71717a6a scale=3 amount=0.55\nscatter color=#9a3412 amount=0.28 seed=4\nveins color=#b45309 scale=4 amount=0.18 seed=7\nbevel light=0.12 dark=0.2\noutline color=#27272a\n>>>`,
+      model: `Here is the revision with a heavier torso and a visor:\n\`\`\`\nmodel "${p.name}"\nbone torso pivot=(0,0,0)\n  box from=(-6,10,-4) to=(6,24,4) color=#2d323f\nbone head pivot=(0,24,0) parent=torso\n  box from=(-4,24,-4) to=(4,32,4) color=#1e222b\n  box from=(-4,27,-4.5) to=(4,29,-4) color=#ef4444\nbone left_arm pivot=(-6,23,0) parent=torso\n  box from=(-9,4,-2) to=(-6,23,2) color=#1e222b\nbone right_arm pivot=(6,23,0) parent=torso\n  box from=(6,4,-2) to=(9,23,2) color=#1e222b\n\`\`\`\nThat keeps the legs untouched.`,
+      prop: `Thicker wall and a taller body:\n\`\`\`\ndesign "${p.name}" units=mm\n\nprofile shell\n  path (0,0) (24,0) (24,60) (24-$wall.thick,60) (24-$wall.thick,$wall.thick) (0,$wall.thick)\n\nsolid body from=shell revolve segments=64\n\nassembly\n  part body at=(0,0,0)\n\`\`\``,
+      texture: `More pitting and stronger veins:\n\`\`\`\ntexture "${p.name}" size=16 metallic=0.6 roughness=0.75\nfill color=#52525b\nnoise dark=#3f3f466a light=#71717a6a scale=3 amount=0.55\nscatter color=#9a3412 amount=0.28 seed=4\nveins color=#b45309 scale=4 amount=0.18 seed=7\nbevel light=0.12 dark=0.2\noutline color=#27272a\n\`\`\``,
     };
     document.getElementById('ai-cassette-input').value = samples[p.track] || samples.model;
     document.getElementById('commit-note-input').value = 'Sample revision';
@@ -2723,6 +3431,10 @@
       { label: 'Compare revisions', kbd: '', icon: 'difference', run: () => switchRightTab('diff') },
       { label: 'View prompt history', kbd: '', icon: 'history', run: () => switchRightTab('history') },
       { label: 'Toggle 2D blueprints', kbd: '', icon: 'square_foot', run: toggleOrtho },
+      { label: 'Reset the 3D view', kbd: 'F', icon: 'recenter', run: () => document.getElementById('cam-reset').click() },
+      { label: 'Toggle the floor grid', kbd: 'G', icon: 'grid_on', run: () => document.getElementById('cam-floor').click() },
+      { label: 'Edit your request', kbd: 'I', icon: 'edit', run: () => { switchRightTab('workbench'); document.getElementById('operator-instruction').focus(); } },
+      { label: 'Clear the component scope', kbd: '', icon: 'center_focus_weak', run: () => selectPart(null) },
       { label: 'Toggle left pod', kbd: '[', icon: 'dock_to_right', run: () => pods.toggle('left') },
       { label: 'Toggle right pod', kbd: ']', icon: 'dock_to_left', run: () => pods.toggle('right') },
     ];
@@ -2730,6 +3442,8 @@
       label: `Open asset → ${x.name} (${x.track})`, kbd: '', icon: x.icon || 'view_in_ar',
       run: () => {
         state.activeProjectId = x.id; syncSettings({ activeProjectId: x.id });
+        selectedPart = null;
+        state.lastInstruction = loadInstruction();
         renderAll(); rebuildStage(); refreshPromptPreview();
       },
     }));
@@ -2776,6 +3490,9 @@
     else if (k === ']') pods.toggle('right');
     else if (k === 'w') document.getElementById('cam-wireframe').click();
     else if (k === 'r') document.getElementById('cam-autorotate').click();
+    else if (k === 'g') document.getElementById('cam-floor').click();
+    else if (k === 'f') document.getElementById('cam-reset').click();
+    else if (k === 'i') { document.getElementById('operator-instruction').focus(); e.preventDefault(); }
     else if (k === ' ') { e.preventDefault(); isPlaying = !isPlaying; updatePlayIcon(); }
     else if (k === '1') { state.settings.cameraPreset = 'iso'; setCameraPreset('iso'); }
     else if (k === '2') { state.settings.cameraPreset = 'front'; setCameraPreset('front'); }
@@ -2791,6 +3508,7 @@
       const b = await apiCall('/api/bootstrap', { method: 'GET' }, true);
       if (b && b.ok && b.projects) {
         applyBootstrapState(b, true);
+        state.lastInstruction = loadInstruction();
         renderAll();
         await rebuildStage();
         await refreshPromptPreview();
@@ -2801,6 +3519,13 @@
       }
     } catch (err) {
       console.info('studio_server.py unreachable:', err.message);
+    }
+    // Only report the backend as missing if nothing was actually loaded.
+    // A later failure (a 3D fault, say) must not masquerade as "no server".
+    if (hasProjects()) {
+      renderAll();
+      toast('PARTIAL LOAD', 'Assets loaded but something went wrong after — see the console.', 'warn');
+      return true;
     }
     API.LIVE = false;
     updateEngineBadge();

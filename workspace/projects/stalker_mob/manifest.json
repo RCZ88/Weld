@@ -3,8 +3,8 @@
   "name": "stalker_mob",
   "track": "model",
   "icon": "view_in_ar",
-  "activeBranch": "main",
-  "headCommitId": "c3",
+  "activeBranch": "feat/amber-optics",
+  "headCommitId": "c5",
   "branches": {
     "exp/heavy-armor": {
       "name": "exp/heavy-armor",

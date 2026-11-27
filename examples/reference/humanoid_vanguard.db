@@ -1,0 +1,51 @@
+# REFERENCE: humanoid. Copy this skeleton, change the boxes.
+# Root at (0,0,0) so the .glb export is not displaced.
+# Hips -> knees -> ankles, so the legs actually bend when it kneels.
+model humanoid_vanguard
+bone root pivot=(0,0,0)
+
+bone hips pivot=(0,17,0) parent=root
+  box from=(-5,16,-3) to=(5,22,3) color=#3A3F45
+bone chest pivot=(0,22,0) parent=hips
+  box from=(-6,22,-4) to=(6,33,4) color=#22252A
+  box from=(-7,30,-4) to=(7,33,4) color=#3A3F45
+bone head pivot=(0,33,0) parent=chest
+  box from=(-3,33,-3) to=(3,39,3) color=#22252A
+  box from=(-2,35,-4) to=(2,37,-3) color=#1CE8FF
+
+bone arm_l pivot=(6,32,0) parent=chest
+  box from=(6,22,-2) to=(9,32,2) color=#3A3F45
+bone hand_l pivot=(7,22,0) parent=arm_l
+  box from=(6,18,-2) to=(9,22,2) color=#C79A4B
+bone arm_r pivot=(-6,32,0) parent=chest
+  box from=(-9,22,-2) to=(-6,32,2) color=#3A3F45
+bone hand_r pivot=(-7,22,0) parent=arm_r
+  box from=(-9,18,-2) to=(-6,22,2) color=#C79A4B
+
+bone thigh_l pivot=(3,16,0) parent=hips
+  box from=(1,8,-2) to=(5,16,2) color=#3A3F45
+bone shin_l pivot=(3,8,0) parent=thigh_l
+  box from=(1,1,-2) to=(5,8,2) color=#22252A
+bone foot_l pivot=(3,1,0) parent=shin_l
+  box from=(1,0,-3) to=(5,1,3) color=#22252A
+bone thigh_r pivot=(-3,16,0) parent=hips
+  box from=(-5,8,-2) to=(-1,16,2) color=#3A3F45
+bone shin_r pivot=(-3,8,0) parent=thigh_r
+  box from=(-5,1,-2) to=(-1,8,2) color=#22252A
+bone foot_r pivot=(-3,1,0) parent=shin_r
+  box from=(-5,0,-3) to=(-1,1,3) color=#22252A
+
+animation idle loop=true
+  key t=0.0 bone=chest rot=(0,0,0)
+  key t=1.5 bone=chest rot=(2,0,0)
+  key t=3.0 bone=chest rot=(0,0,0)
+
+animation kneel loop=false
+  key t=0.0 bone=hips pos=(0,0,0)
+  key t=0.8 bone=hips pos=(0,-7,0)
+  key t=0.0 bone=thigh_l rot=(0,0,0)
+  key t=0.8 bone=thigh_l rot=(-80,0,0)
+  key t=0.0 bone=shin_l rot=(0,0,0)
+  key t=0.8 bone=shin_l rot=(85,0,0)
+  key t=0.0 bone=thigh_r rot=(0,0,0)
+  key t=0.8 bone=thigh_r rot=(-20,0,0)

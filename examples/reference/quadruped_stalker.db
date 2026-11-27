@@ -1,0 +1,44 @@
+# REFERENCE: quadruped. Four legs, each with a knee, and a spine that bends.
+model quadruped_stalker
+bone root pivot=(0,0,0)
+
+bone spine pivot=(0,14,0) parent=root
+  box from=(-4,12,-9) to=(4,18,5) color=#3A3F45
+bone neck pivot=(0,16,-9) parent=spine
+  box from=(-3,13,-14) to=(3,18,-9) color=#22252A
+bone head pivot=(0,15,-14) parent=neck
+  box from=(-3,12,-19) to=(3,18,-14) color=#22252A
+  box from=(-2,15,-20) to=(2,17,-19) color=#4A1C6B
+bone tail pivot=(0,16,5) parent=spine
+  box from=(-2,14,5) to=(2,17,13) color=#3A3F45
+
+bone fl_thigh pivot=(4,12,-7) parent=spine
+  box from=(3,6,-9) to=(6,12,-5) color=#3A3F45
+bone fl_shin pivot=(4,6,-7) parent=fl_thigh
+  box from=(3,0,-9) to=(6,6,-5) color=#22252A
+bone fr_thigh pivot=(-4,12,-7) parent=spine
+  box from=(-6,6,-9) to=(-3,12,-5) color=#3A3F45
+bone fr_shin pivot=(-4,6,-7) parent=fr_thigh
+  box from=(-6,0,-9) to=(-3,6,-5) color=#22252A
+bone bl_thigh pivot=(4,12,3) parent=spine
+  box from=(3,6,1) to=(6,12,5) color=#3A3F45
+bone bl_shin pivot=(4,6,3) parent=bl_thigh
+  box from=(3,0,1) to=(6,6,5) color=#22252A
+bone br_thigh pivot=(-4,12,3) parent=spine
+  box from=(-6,6,1) to=(-3,12,5) color=#3A3F45
+bone br_shin pivot=(-4,6,3) parent=br_thigh
+  box from=(-6,0,1) to=(-3,6,5) color=#22252A
+
+animation walk loop=true
+  key t=0.0 bone=fl_thigh rot=(25,0,0)
+  key t=0.5 bone=fl_thigh rot=(-25,0,0)
+  key t=1.0 bone=fl_thigh rot=(25,0,0)
+  key t=0.0 bone=br_thigh rot=(25,0,0)
+  key t=0.5 bone=br_thigh rot=(-25,0,0)
+  key t=1.0 bone=br_thigh rot=(25,0,0)
+  key t=0.0 bone=fr_thigh rot=(-25,0,0)
+  key t=0.5 bone=fr_thigh rot=(25,0,0)
+  key t=1.0 bone=fr_thigh rot=(-25,0,0)
+  key t=0.0 bone=bl_thigh rot=(-25,0,0)
+  key t=0.5 bone=bl_thigh rot=(25,0,0)
+  key t=1.0 bone=bl_thigh rot=(-25,0,0)

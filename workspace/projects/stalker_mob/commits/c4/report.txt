@@ -1,2 +1,0 @@
-PASS: Heavy armor plate silhouette validated.
-Bounding envelope increased +25% on X axis.

@@ -1,0 +1,30 @@
+# REFERENCE: machine. A fixed base and an arm that swings, slews and lifts.
+model machine_crane
+bone root pivot=(0,0,0)
+  box from=(-10,0,-10) to=(10,3,10) color=#22252A
+
+bone turret pivot=(0,3,0) parent=root
+  box from=(-7,3,-7) to=(7,12,7) color=#3A3F45
+  box from=(-5,12,-5) to=(5,15,5) color=#22252A
+bone cab pivot=(0,12,-5) parent=turret
+  box from=(-4,12,-11) to=(4,20,-5) color=#3A3F45
+  box from=(-3,15,-12) to=(3,19,-11) color=#1CE8FF
+
+bone boom pivot=(0,15,0) parent=turret
+  box from=(-2,15,0) to=(2,19,28) color=#C79A4B
+bone jib pivot=(0,17,28) parent=boom
+  box from=(-1,16,28) to=(1,19,44) color=#C79A4B
+bone hook pivot=(0,16,44) parent=jib
+  box from=(-1,8,43) to=(1,16,45) color=#3A3F45
+  box from=(-2,5,42) to=(2,8,46) color=#FFB830
+
+animation slew loop=true
+  key t=0.0 bone=turret rot=(0,0,0)
+  key t=3.0 bone=turret rot=(0,90,0)
+  key t=6.0 bone=turret rot=(0,0,0)
+
+animation lift loop=false
+  key t=0.0 bone=boom rot=(0,0,0)
+  key t=1.2 bone=boom rot=(-25,0,0)
+  key t=0.0 bone=hook pos=(0,0,0)
+  key t=1.2 bone=hook pos=(0,6,0)

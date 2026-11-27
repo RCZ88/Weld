@@ -1,0 +1,23 @@
+# A collapsed foundry hall from the Ashen Foundry Basin.
+structure foundry_ruin size=(24,12,20) seed=7
+
+material wall    soot_iron_plate      color=#3A3F45
+material floor   foundry_grate        color=#22252A
+material pillar  brushed_brass        color=#C79A4B
+material slag    furnace_blackbody    color=#5A2A14
+
+room (0,0,0) (23,9,19) walls=wall floor=floor ceiling=none
+door  south at=(10,0) width=4 height=6
+window east at=(3,3) width=2 every=5
+window west at=(3,3) width=2 every=5
+
+colonnade (4,1,4) to=(20,1,4) material=pillar form=column every=4 height=8
+colonnade (4,1,15) to=(20,1,15) material=pillar form=column every=4 height=8
+
+fill (4,9,4) (20,9,15) material=wall form=slab_half
+stairs (2,1,17) to=(8,7,17) material=wall facing=east
+
+collapse roof amount=0.55
+collapse walls amount=0.18
+rubble amount=0.35 material=slag
+damage amount=0.5

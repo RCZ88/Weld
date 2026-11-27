@@ -1,4 +1,0 @@
-PASS: 0 errors, 0 warnings.
-Watertight check: VERIFIED.
-Emissive visor channel bound (#ef4444).
-Animation "lunge" (0.50s loop) compiled cleanly.

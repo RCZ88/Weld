@@ -124,6 +124,8 @@ DEFAULT_SETTINGS = {
     "styleLock": "",
     "styleLockOn": True,
     "styleLockPresets": {},
+    # Last parsed style spec, rendered visually in the SETUP panel.
+    "styleSpec": {},
 }
 
 # ----------------------------------------------------------------------
@@ -214,6 +216,19 @@ outline color=#27272a
 # A new project starts from one of these - real, minimal, compiling source
 # for its track, with __NAME__ swapped for the project id.
 STARTER_SOURCES = {
+    "structure": '''structure "__NAME__" size=(16,8,16) seed=1
+
+material wall   stone_block     color=#6E7378
+material floor  timber_plank    color=#4E422F
+material post   weathered_iron  color=#3A3F45
+
+room (0,0,0) (15,5,15) walls=wall floor=floor ceiling=none
+door south at=(6,0) width=3 height=4
+window east at=(2,2) width=2 every=5
+
+colonnade (3,1,3) to=(12,1,3) material=post form=column every=4 height=4
+fill (0,6,0) (15,6,15) material=wall form=slab_half
+''',
     "model": '''model "__NAME__"
 bone body pivot=(0,0,0)
   box from=(-4,0,-3) to=(4,14,3) color=#9aa0ac
@@ -430,7 +445,7 @@ def strip_sentinels(text: str) -> str:
         if inner:
             block = inner.group(1)
         block = block.strip("\n")
-        if _looks_like_source(block):
+        if _is_source(block):
             return block.rstrip() + "\n"
 
     if _looks_like_source(raw):
@@ -483,7 +498,13 @@ def _fmt_num(v) -> str:
     return f"{v:g}" if isinstance(v, (int, float)) else str(v)
 
 
-def compile_source(dsl: str) -> CompileResult:
+try:
+    import structurebridge as sb_core
+except Exception:  # the Studio still runs without the structure track
+    sb_core = None
+
+
+def compile_source(dsl: str, style: dict = None) -> CompileResult:
     """Compile a revision with designbridge and read the real facts back out."""
     if db_core is None:
         raise RuntimeError(
@@ -493,6 +514,30 @@ def compile_source(dsl: str) -> CompileResult:
     body = strip_sentinels(dsl)
     if not body.strip():
         raise ValueError("The revision is empty - there is no DSL to compile.")
+
+    # The structure track is a separate compiler sitting beside designbridge,
+    # not a fork of it: a document that declares itself a structure is routed
+    # there and comes back wearing the same CompileResult the rest of the
+    # Studio already understands.
+    if detect_kind_from_source(body) == "structure":
+        if sb_core is None:
+            raise RuntimeError(
+                "This is a structure document, but structurebridge.py was not "
+                "importable. Put it next to studio_server.py and restart.")
+        doc = sb_core.parse(body)
+        allowed = (style or {}).get("forms") if isinstance(style, dict) else None
+        report = sb_core.report(doc, allowed)
+        checks = sb_core.validate(doc, allowed)
+        errors = len(doc.errors) + len([c for c in checks if c[0] == "error"])
+        warnings = len([d for d in doc.diags if d[0] == "warn"]) \
+            + len([c for c in checks if c[0] == "warn"])
+        sx, sy, sz = doc.size
+        forms = len({c.form for c in doc.cells.values()})
+        return CompileResult(
+            "structure", doc, "PASS" if errors == 0 else "FAIL", report,
+            errors, warnings, f"{sx}x{sy}x{sz} cells",
+            f"{len(doc.cells)}C / {forms}F",
+            f"{len(doc.materials)} materials")
 
     kind, doc = db_core.compile_any(body)
     report = db_core.report_any(kind, doc)
@@ -539,7 +584,13 @@ def export_artifacts(result: CompileResult, outdir: Path, slug: str) -> list:
     """Write every real export format for this kind. Returns the files written."""
     outdir.mkdir(parents=True, exist_ok=True)
     before = {p.name for p in outdir.iterdir() if p.is_file()}
-    db_core.export_any(result.kind, result.doc, str(outdir), slug)
+    if result.kind == "structure":
+        if sb_core is not None:
+            sb_core.export_json(result.doc, str(outdir / f"{slug}.structure.json"))
+            sb_core.preview_png(result.doc, str(outdir / f"{slug}_preview.png"))
+            sb_core.contact_sheet(result.doc, str(outdir / f"{slug}_sheet.png"))
+    else:
+        db_core.export_any(result.kind, result.doc, str(outdir), slug)
     return sorted(
         p.name for p in outdir.iterdir()
         if p.is_file() and (p.name not in before or p.name.startswith(slug))
@@ -565,6 +616,52 @@ def mesh_payload(result: CompileResult) -> dict:
             return db_core.parse_color(spec) or fallback
         except Exception:
             return fallback
+
+    # A structure's components are its materials: highlighting "wall" and
+    # watching every wall cell light up is the question an operator actually
+    # asks of a building.
+    if result.kind == "structure" and sb_core is not None:
+        doc = result.doc
+        bymat = {}
+        for (x, y, z), c in doc.cells.items():
+            bymat.setdefault(c.mat, []).append((x, y, z, c))
+        alias = {m["id"]: a for a, m in doc.materials.items()}
+        colour = {m["id"]: m.get("color", "#9AA0A8") for m in doc.materials.values()}
+        colors = []
+        for mid, cells in sorted(bymat.items()):
+            lo, hi, n0 = [1e9] * 3, [-1e9] * 3, len(tris)
+            for (x, y, z, c) in cells:
+                for t in sb_core.form_tris(c.form, c.ori):
+                    for p in t:
+                        wp = (p[0] + x, p[1] + y, p[2] + z)
+                        tris.extend(wp)
+                        for i in range(3):
+                            lo[i] = min(lo[i], wp[i])
+                            hi[i] = max(hi[i], wp[i])
+            nvert = (len(tris) - n0) // 3
+            rgba = _rgba_of(colour.get(mid, "#9AA0A8"))
+            colors.extend([rgba[0] / 255.0, rgba[1] / 255.0, rgba[2] / 255.0] * nvert)
+            # start and count are in TRIANGLES: the viewport slices the flat
+            # arrays with start*9 and count*9. Counting vertices here made
+            # every slice three times too long, the colour attribute was
+            # dropped as too short, and the whole building rendered white.
+            groups.append({
+                "name": alias.get(mid, f"material_{mid}"), "kind": "material",
+                "start": n0 // 9, "count": nvert // 3,
+                "color": colour.get(mid, "#9AA0A8"), "box": [lo, hi],
+            })
+        mn = [min(tris[i::3]) for i in range(3)] if tris else [0, 0, 0]
+        mx = [max(tris[i::3]) for i in range(3)] if tris else [0, 0, 0]
+        # Which blocks this building actually uses, so the UI can show it
+        # beside the allow-list instead of making someone read the report.
+        counts = {}
+        for c in doc.cells.values():
+            nm = sb_core.FORMS[c.form][0]
+            counts[nm] = counts.get(nm, 0) + 1
+        return {"ok": True, "kind": "structure", "up": "Y",
+                "positions": tris, "colors": colors, "groups": groups,
+                "min": mn, "max": mx, "formCounts": counts,
+                "cellCount": len(doc.cells)}
 
     if result.kind == "model":
         doc = result.doc
@@ -741,6 +838,19 @@ class StudioStorage:
                     key TEXT PRIMARY KEY,
                     value_json TEXT NOT NULL,
                     updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS folders (
+                    path TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS blocks (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    note TEXT NOT NULL DEFAULT '',
+                    origin TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
                 );
                 """
             )
@@ -1039,6 +1149,10 @@ class StudioStorage:
                     "branches": branches,
                     "commits": commits,
                     "chatHistory": chat_history,
+                    # Sorting by name is the wrong only option: the asset you
+                    # made ten minutes ago is found by time, not spelling.
+                    "createdAt": p["created_at"] if "created_at" in p.keys() else "",
+                    "updatedAt": p["updated_at"] if "updated_at" in p.keys() else "",
                 }
 
         return {
@@ -1048,6 +1162,11 @@ class StudioStorage:
             "workspaceDir": str(self.root),
             "settings": settings,
             "projects": projects,
+            "blocks": self.list_blocks(),
+            # Folders a person made that hold nothing yet. Derived folders -
+            # the ones implied by an asset's path - are still derived; these
+            # are only the ones that would otherwise vanish for being empty.
+            "folders": self.list_folders(),
         }
 
     # ------------------------------------------------------------------
@@ -1059,7 +1178,8 @@ class StudioStorage:
             return ""
         return strip_sentinels(raw_text).rstrip()
 
-    def _compile_dsl(self, track: str, dsl: str, parent_commit: dict) -> CompileResult:
+    def _compile_dsl(self, track: str, dsl: str, parent_commit: dict,
+                     style: dict = None) -> CompileResult:
         """Compile a revision for real. No guessing, no fabricated PASS.
 
         The previous build only reached designbridge when the source did NOT
@@ -1069,7 +1189,7 @@ class StudioStorage:
         strips the sentinels itself and always runs the real compiler, so a
         broken design now says so and carries the real diagnostics.
         """
-        return compile_source(dsl)
+        return compile_source(dsl, style)
 
     def _save_thumbnail_file(self, project_id: str, commit_id: str, data_url: str) -> str:
         if not data_url or not data_url.startswith("data:image/png;base64,"):
@@ -1137,20 +1257,1001 @@ class StudioStorage:
     # ------------------------------------------------------------------
     # PROJECT CRUD, BRANCH, COMMIT & CHAT HISTORY MUTATIONS
     # ------------------------------------------------------------------
-    def create_project(self, payload: dict) -> dict:
+    # ------------------------------------------------------------------
+    # REUSE LIBRARY, TRACK SWITCHING, BULK CREATE & BULK EXPORT
+    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # BULK RENAME - a JSON mapping, and the prompt that produces one
+    # ------------------------------------------------------------------
+    def selfcheck_brief(self, payload: dict) -> dict:
+        """The text that turns a blind model into one that checks its own work.
+
+        Everything the reviews asked for already existed; it was simply on the
+        wrong side of a copy-paste boundary. This hands the model the compiler
+        and tells it how to run it, with the brief's own complexity, palette
+        and target size filled in so the checks are the real ones.
+        """
+        style = normalize_style(payload.get("style"))
+        lock = payload.get("palette") or []
+        if isinstance(lock, str):
+            lock = [c.strip() for c in lock.split(",") if c.strip()]
+        size = (payload.get("size") or "").strip()
+        pid = (payload.get("projectId") or "").strip()
+        kind = (payload.get("kind") or payload.get("track") or "model").lower()
+        if kind not in TRACK_KINDS:
+            kind = "model"
+
+        flags = [f"--complexity {style['complexity']}"]
+        if lock:
+            flags.append('--palette "' + ",".join(lock[:24]) + '"')
+        if size:
+            flags.append(f"--size {size}")
+        flags.append("--sheet look.png")
+        flag_line = " \\\n    ".join(flags)
+
+        name = (pid or "doc")
+        ext = ".sb" if kind == "structure" else ".db"
+        files = ("three files: designbridge.py (the compiler), structurebridge.py "
+                 "(the building compiler) and dbcheck.py (everything they do not\ncheck)"
+                 if kind == "structure" else
+                 "two files: designbridge.py (the compiler this project uses) and\n"
+                 "dbcheck.py (everything the compiler does not check)")
+        return {"ok": True, "prompt": f"""BEFORE YOU ANSWER: CHECK YOUR OWN WORK
+
+You have {files}. Plain Python, standard
+library only, nothing to install. Put them in your working folder.
+
+Write your document to a file, compile it, read what comes back, fix it, and
+repeat. Nobody sees the rounds you throw away - only the document that passes.
+
+    # write the document
+    cat > {name}{ext} <<'END'
+    ...your design document...
+    END
+
+    # does it compile? what does it look like?
+    python3 {"structurebridge.py check" if kind == "structure" else "designbridge.py check"} {name}{ext}
+
+    # the things nobody can hold in their head
+    python3 dbcheck.py {name}{ext} \\
+    {flag_line}
+
+The first command prints every error with a fix hint, the bone tree, the size,
+and three ASCII silhouettes - a real projection of the geometry, so a part in
+the wrong place shows up there.
+
+The second checks what it cannot: boxes per bone against the cap, the total
+against the budget, bones parented to nothing that will not move when the body
+does, boxes below the ground or floating unattached, colours outside the locked
+palette (and the nearest one that is allowed), the bounding box against the
+brief, and two animation keys for one bone at one time.
+
+look.png is four camera angles in one image. If you can see images, open it.
+One view is not enough - a lens and the hood over it can point opposite ways
+and look perfectly fine from the front.
+
+Stop when dbcheck prints READY. Then send the document, and only the document,
+in one fenced block.
+
+The budget figures are not advice. The studio runs these same checks when your
+document arrives, so a document that fails here fails there too.
+"""}
+
+    def rename_brief(self, payload: dict) -> dict:
+        """The prompt that teaches a text AI to emit the rename mapping.
+
+        Naming forty assets by hand is the kind of work a language model is
+        actually good at, but only if it is told the exact shape to answer in
+        and given the real ids - a mapping keyed on invented ids renames
+        nothing. So the prompt carries the current inventory and the contract,
+        and nothing else.
+        """
+        scope = (payload.get("scope") or "assets").lower()
+        ids = [str(x) for x in (payload.get("ids") or []) if str(x).strip()]
+        target = (payload.get("projectId") or "").strip()
+        hint = (payload.get("hint") or "").strip()
+
+        with self._connect() as conn:
+            if scope == "versions":
+                pid = target or (ids[0] if ids else "")
+                p = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+                if not p:
+                    raise ValueError("Open the asset whose versions you want renamed first.")
+                rows = conn.execute(
+                    "SELECT id, tag, branch, status, note, struct FROM commits WHERE project_id=? ORDER BY seq",
+                    (pid,)).fetchall()
+                # A version selection narrows the inventory: asking a model to
+                # name forty revisions when three are selected wastes the
+                # answer and invites it to rename the wrong ones.
+                picked = {str(x) for x in (payload.get("commitIds") or [])}
+                if picked:
+                    rows = [r for r in rows if r["id"] in picked] or rows
+                inv = [f"  {r['tag']:<6} {r['branch']:<10} {r['status']:<5} {r['struct'] or '-':<14} {r['note'] or ''}"
+                       for r in rows]
+                head = (f"RENAME THE VERSIONS OF {p['name']}\n"
+                        f"  {len(rows)} revision(s). A version's note is what the operator reads in the\n"
+                        "  history and the branch map, so it must say what changed, not what the asset is.")
+                contract = (
+                    'ANSWER WITH JSON AND NOTHING ELSE, in one fenced block:\n'
+                    '```json\n'
+                    '{\n'
+                    '  "versions": [\n'
+                    '    { "tag": "v3", "note": "wider shoulders, gold visor" },\n'
+                    '    { "tag": "v4", "note": "thinner legs", "newTag": "v4-slim" }\n'
+                    '  ]\n'
+                    '}\n'
+                    '```\n'
+                    "  tag      which revision to rename - copy it exactly from the list above\n"
+                    "  note     the new note. One line, under 60 characters, plain words\n"
+                    "  newTag   optional. Only when a label reads better than vN; must stay unique\n"
+                    "  Leave out any revision you would not change. Never invent a tag."
+                )
+            else:
+                if ids:
+                    rows = conn.execute(
+                        f"SELECT * FROM projects WHERE id IN ({','.join('?' * len(ids))})", ids).fetchall()
+                else:
+                    rows = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
+                if not rows:
+                    raise ValueError("Nothing selected to rename.")
+                inv = []
+                for r in rows:
+                    c = conn.execute(
+                        "SELECT tag, struct FROM commits WHERE project_id=? ORDER BY seq DESC LIMIT 1",
+                        (r["id"],)).fetchone()
+                    folder = (r["folder"] if "folder" in r.keys() else "") or "-"
+                    inv.append(f"  {r['id']:<22} name={r['name']:<22} track={r['track']:<8} "
+                               f"folder={folder:<18} head={c['tag'] if c else '-'} {c['struct'] if c else ''}")
+                head = (f"RENAME {len(rows)} ASSET(S)\n"
+                        "  An asset's name is a filename: lower snake_case, no spaces, no punctuation\n"
+                        "  beyond underscores. It is what every export is called, so it should read as\n"
+                        "  what the thing is, not as a sentence about it.")
+                contract = (
+                    'ANSWER WITH JSON AND NOTHING ELSE, in one fenced block:\n'
+                    '```json\n'
+                    '{\n'
+                    '  "assets": [\n'
+                    '    { "id": "untitled_model_9f2a", "name": "slag_crane" },\n'
+                    '    { "id": "wall_tile", "name": "soot_concrete_tile", "folder": "STRATA / foundry" }\n'
+                    '  ]\n'
+                    '}\n'
+                    '```\n'
+                    "  id      which asset to rename - copy it exactly from the list above\n"
+                    "  name    the new name. lower snake_case, 2-4 words, no extension\n"
+                    "  folder  optional. Include only when the asset belongs somewhere else\n"
+                    "  Leave out any asset you would not change. Never invent an id."
+                )
+
+        parts = [
+            "You are naming the contents of a game asset repository.",
+            "",
+            head,
+            "",
+            "THE INVENTORY - these are the real ids. Copy them exactly.",
+            "\n".join(inv),
+        ]
+        if hint:
+            parts += ["", "WHAT THE OPERATOR WANTS", "  " + hint]
+        parts += [
+            "",
+            "HOW TO NAME",
+            "  Say what the thing is, at the level someone browsing a folder needs.",
+            "  Keep a family consistent: if two assets are parts of one machine, their",
+            "  names should sort next to each other.",
+            "  Do not number things that are not a sequence, and do not restate the",
+            "  track - a model called `drone_model` is saying the same thing twice.",
+            "",
+            contract,
+        ]
+        return {"ok": True, "prompt": "\n".join(parts), "scope": scope}
+
+    @staticmethod
+    def _parse_rename_json(raw, scope: str) -> list:
+        """Read the mapping out of whatever the model actually sent.
+
+        Models wrap JSON in prose and fences, and they pick their own container
+        key. Rather than reject that, pull the first JSON object or array out of
+        the text and accept any of the shapes a reasonable model would choose,
+        including a bare `{"old": "new"}` map.
+        """
+        text = (raw or "").strip()
+        if not text:
+            raise ValueError("Nothing pasted.")
+        m = re.search(r"```[a-zA-Z0-9_\-]*\n(.*?)```", text, re.S)
+        if m:
+            text = m.group(1).strip()
+        start = min((i for i in (text.find("{"), text.find("[")) if i >= 0), default=-1)
+        if start < 0:
+            raise ValueError("No JSON found in that text.")
+        end = max(text.rfind("}"), text.rfind("]"))
+        try:
+            data = json.loads(text[start:end + 1])
+        except Exception as exc:
+            raise ValueError(f"That is not valid JSON: {exc}")
+
+        items = None
+        if isinstance(data, list):
+            items = data
+        elif isinstance(data, dict):
+            for key in ("versions", "assets", "renames", "items", "mapping", "projects"):
+                if isinstance(data.get(key), list):
+                    items = data[key]
+                    break
+            if items is None:
+                nested = data.get("versions") or data.get("assets") or data.get("mapping")
+                if isinstance(nested, dict):
+                    data = nested
+                # A flat {"old": "new"} map.
+                items = [{"id": k, "name": v} if scope != "versions" else {"tag": k, "note": v}
+                         for k, v in data.items() if isinstance(v, str)]
+        if not items:
+            raise ValueError("The JSON held no rename entries.")
+
+        out = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            if scope == "versions":
+                tag = str(it.get("tag") or it.get("version") or it.get("id") or "").strip()
+                if not tag:
+                    continue
+                out.append({
+                    "tag": tag,
+                    "note": (str(it["note"]).strip() if it.get("note") is not None else None),
+                    "newTag": (str(it["newTag"]).strip() if it.get("newTag") else None),
+                    "asset": str(it.get("asset") or it.get("projectId") or "").strip(),
+                })
+            else:
+                pid = str(it.get("id") or it.get("projectId") or it.get("asset") or "").strip()
+                if not pid:
+                    continue
+                out.append({
+                    "id": pid,
+                    "name": (str(it["name"]).strip() if it.get("name") else None),
+                    "folder": (str(it["folder"]).strip() if it.get("folder") is not None else None),
+                })
+        if not out:
+            raise ValueError("No usable entries - every one was missing its id or tag.")
+        return out
+
+    def rename_commit(self, project_id: str, tag: str, new_tag=None, new_note=None) -> None:
+        """Retag or re-note one revision. Tags stay unique inside a project."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM commits WHERE project_id=? AND tag=?", (project_id, tag)).fetchone()
+            if not row:
+                raise ValueError(f"No revision tagged {tag!r}")
+            if new_tag and new_tag != tag:
+                clash = conn.execute(
+                    "SELECT 1 FROM commits WHERE project_id=? AND tag=? AND id<>?",
+                    (project_id, new_tag, row["id"])).fetchone()
+                if clash:
+                    raise ValueError(f"{new_tag!r} is already used in this asset")
+                conn.execute("UPDATE commits SET tag=? WHERE id=?", (new_tag, row["id"]))
+            if new_note is not None:
+                conn.execute("UPDATE commits SET note=? WHERE id=?", (new_note, row["id"]))
+            fresh = conn.execute("SELECT * FROM commits WHERE id=?", (row["id"],)).fetchone()
+        # meta.json on disk carries the tag and note, so it follows the rename.
+        try:
+            cdir = self.projects_dir / project_id / "commits" / row["id"]
+            if (cdir / "meta.json").is_file():
+                meta = json.loads((cdir / "meta.json").read_text(encoding="utf-8"))
+                meta["tag"] = fresh["tag"]
+                meta["note"] = fresh["note"]
+                (cdir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def set_commit_label(self, payload: dict) -> dict:
+        """Relabel one revision, by id, at any time.
+
+        A note used to be writable only in the moment a revision was created,
+        which is the one moment you know least about it. What a revision turned
+        out to be is usually clear later, so the label has to stay editable.
+        """
+        pid = (payload.get("projectId") or "").strip()
+        cid = (payload.get("commitId") or "").strip()
+        note = payload.get("note")
+        tag = (payload.get("tag") or "").strip()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM commits WHERE project_id=? AND id=?", (pid, cid)).fetchone()
+            if not row:
+                raise ValueError("No such revision")
+        self.rename_commit(pid, row["tag"],
+                           tag or None,
+                           None if note is None else str(note).strip())
+        try:
+            self._write_project_manifest(pid)
+        except Exception:
+            pass
+        return self.get_bootstrap_state()
+
+    def apply_rename(self, payload: dict) -> dict:
+        """Apply a parsed mapping. Every entry stands or fails on its own."""
+        scope = (payload.get("scope") or "assets").lower()
+        allowed = {str(x) for x in (payload.get("ids") or []) if str(x).strip()}
+        target = (payload.get("projectId") or "").strip()
+        ops = self._parse_rename_json(payload.get("json") or payload.get("text"), scope)
+
+        results = []
+        touched = set()
+        for op in ops:
+            try:
+                if scope == "versions":
+                    pid = op["asset"] or target
+                    if not pid:
+                        raise ValueError("no target asset")
+                    self.rename_commit(pid, op["tag"], op["newTag"], op["note"])
+                    touched.add(pid)
+                    results.append({
+                        "key": f"{pid} {op['tag']}",
+                        "to": " · ".join(x for x in (op["newTag"], op["note"]) if x) or "(nothing to change)",
+                        "ok": True, "error": "",
+                    })
+                else:
+                    pid = op["id"]
+                    if allowed and pid not in allowed:
+                        raise ValueError("not in the selection")
+                    self.rename_project(pid, op["name"] or "", folder=op["folder"])
+                    touched.add(pid)
+                    with self._connect() as conn:
+                        r = conn.execute("SELECT name, folder FROM projects WHERE id=?", (pid,)).fetchone()
+                    results.append({
+                        "key": pid,
+                        "to": (r["name"] if r else op["name"] or "")
+                             + (f" · {op['folder'] or 'unfiled'}" if op["folder"] is not None else ""),
+                        "ok": True, "error": "",
+                    })
+            except Exception as exc:
+                results.append({
+                    "key": op.get("id") or op.get("tag") or "?",
+                    "to": "", "ok": False, "error": str(exc),
+                })
+        for pid in touched:
+            try:
+                self._write_project_manifest(pid)
+            except Exception:
+                pass
+        boot = self.get_bootstrap_state()
+        boot["renames"] = results
+        return boot
+
+    def bulk_project_action(self, payload: dict) -> dict:
+        """Apply one action to a whole selection.
+
+        A selection that can only be exported is half a feature: the reason to
+        select eleven assets is usually to move, retrack or delete all eleven.
+        Each asset is handled independently so one failure does not abandon the
+        rest, and what failed is named.
+        """
+        ids = [str(x) for x in (payload.get("ids") or []) if str(x).strip()]
+        action = (payload.get("action") or "").lower()
+
+        # Renaming a folder is renaming a path prefix: every asset at that
+        # path, and everything nested under it, moves together. Folders are
+        # not rows in a table - they exist only as the paths assets carry -
+        # so this is the one place that has to know about the separator.
+        if action == "refolder":
+            src = (payload.get("from") or "").strip().strip("/")
+            dst = (payload.get("to") or "").strip().strip("/")
+            if not src:
+                raise ValueError("No folder to rename.")
+            if not dst:
+                raise ValueError("A folder needs a name. Move assets to Unfiled instead.")
+            moved, clashes = [], []
+            with self._connect() as conn:
+                rows = conn.execute("SELECT id, folder FROM projects").fetchall()
+            for r in rows:
+                cur = (r["folder"] or "").strip().strip("/")
+                if cur != src and not cur.startswith(src + "/"):
+                    continue
+                nxt = dst + cur[len(src):]
+                try:
+                    self.rename_project(r["id"], "", folder=nxt)
+                    moved.append(r["id"])
+                except Exception as exc:
+                    clashes.append(f"{r['id']}: {exc}")
+            with self._connect() as conn:
+                rows = conn.execute("SELECT path FROM folders").fetchall()
+                for r in rows:
+                    cur = r["path"]
+                    if cur != src and not cur.startswith(src + "/"):
+                        continue
+                    conn.execute("DELETE FROM folders WHERE path=?", (cur,))
+                    conn.execute(
+                        "INSERT OR IGNORE INTO folders (path, created_at) VALUES (?, ?)",
+                        (dst + cur[len(src):], now_iso()))
+            boot = self.get_bootstrap_state()
+            boot["done"] = moved
+            boot["failed"] = clashes
+            return boot
+
+        if not ids:
+            raise ValueError("Nothing selected.")
+        done, failed = [], []
+        if action == "delete":
+            with self._connect() as conn:
+                total = conn.execute("SELECT COUNT(*) AS n FROM projects").fetchone()["n"]
+            if len(ids) >= total:
+                raise ValueError(
+                    f"That would delete every asset in the workspace ({total}). "
+                    "Leave at least one behind."
+                )
+        for pid in ids:
+            try:
+                if action == "delete":
+                    self.delete_project(pid)
+                elif action == "move":
+                    self.rename_project(pid, "", folder=(payload.get("folder") or ""))
+                elif action == "track":
+                    self.set_project_track({"projectId": pid, "track": payload.get("track")})
+                else:
+                    raise ValueError(f"Unknown action {action!r}")
+                done.append(pid)
+            except Exception as exc:
+                failed.append(f"{pid}: {exc}")
+        boot = self.get_bootstrap_state()
+        boot["done"] = done
+        boot["failed"] = failed
+        return boot
+
+    def intake_documents(self, payload: dict) -> dict:
+        """Take a pasted blob of AI output and file every document in it.
+
+        This is the other half of the round trip. The prompt goes out in one
+        copy; the answer can come back carrying six assets or three takes on
+        one, and until now each had to be pasted separately. Every document is
+        compiled for real, and a document that fails is still filed with its
+        diagnostics rather than dropped - a failed revision is information.
+
+        Routing, by `mode`:
+          auto     - a document whose name matches an existing asset becomes a
+                     new version of it; anything else becomes a new asset.
+          versions - every document becomes a successive version of one asset,
+                     in the order pasted. Several takes on the same thing.
+          assets   - every document becomes its own new asset.
+        """
+        text = payload.get("text") or ""
+        mode = (payload.get("mode") or "auto").lower()
+        if mode not in ("auto", "versions", "assets"):
+            mode = "auto"
+        folder = normalize_folder(payload.get("folder"))
+        track = (payload.get("track") or "auto").lower()
+        if track not in TRACK_KINDS and track != "auto":
+            track = "auto"
+        target = (payload.get("projectId") or "").strip()
+        note = (payload.get("note") or "").strip()
+
+        docs = split_documents(text)
+        if not docs:
+            raise ValueError(
+                "No design documents found in that text. A document starts with "
+                "`model`, `design` or `texture`, ideally inside a fenced block."
+            )
+        if len(docs) > 24:
+            raise ValueError(f"{len(docs)} documents is more than one intake should carry. Keep it under 24.")
+
+        with self._connect() as conn:
+            rows = conn.execute("SELECT id, name FROM projects").fetchall()
+        by_name = {}
+        for r in rows:
+            by_name[r["name"]] = r["id"]
+            by_name[r["id"]] = r["id"]
+
+        results = []
+        for i, doc in enumerate(docs, 1):
+            name = document_name(doc)
+            kind = detect_kind_from_source(doc) or "model"
+            try:
+                if mode == "versions":
+                    pid = target or by_name.get(name) or ""
+                    if not pid:
+                        raise ValueError("No target asset for a versions intake")
+                    route = "version"
+                elif mode == "assets":
+                    pid, route = "", "asset"
+                else:
+                    pid = by_name.get(name, "")
+                    route = "version" if pid else "asset"
+
+                if route == "asset":
+                    pid = self._insert_project({
+                        "name": name,
+                        "track": track,
+                        "brief": f"Intake: pasted {kind} document" + (f" {name}" if name else ""),
+                        "folder": folder,
+                        "source": doc,
+                        "note": note or f"Intake {i} of {len(docs)}",
+                    })
+                    by_name.setdefault(name or pid, pid)
+                    with self._connect() as conn:
+                        c = conn.execute(
+                            "SELECT tag, status, errors FROM commits WHERE project_id=? ORDER BY seq DESC LIMIT 1",
+                            (pid,)).fetchone()
+                else:
+                    self.compile_and_save({
+                        "projectId": pid,
+                        "rawAiResponse": doc,
+                        "userPrompt": note or f"Intake {i} of {len(docs)}",
+                        "note": note or f"Intake {i} of {len(docs)}",
+                        "mode": "new_take" if mode == "versions" else "edit",
+                        "style": payload.get("style"),
+                    })
+                    with self._connect() as conn:
+                        c = conn.execute(
+                            "SELECT tag, status, errors FROM commits WHERE project_id=? ORDER BY seq DESC LIMIT 1",
+                            (pid,)).fetchone()
+                results.append({
+                    "index": i, "name": name or pid, "projectId": pid, "kind": kind,
+                    "route": route, "tag": c["tag"] if c else "", 
+                    "status": c["status"] if c else "FAIL",
+                    "errors": c["errors"] if c else 1, "error": "",
+                })
+            except Exception as exc:
+                results.append({
+                    "index": i, "name": name or f"document {i}", "projectId": "", "kind": kind,
+                    "route": "skipped", "tag": "", "status": "FAIL", "errors": 1, "error": str(exc),
+                })
+
+        if mode == "versions" and target:
+            self.update_settings({"activeProjectId": target})
+        boot = self.get_bootstrap_state()
+        boot["intake"] = results
+        return boot
+
+    MAX_FOLDER_DEPTH = 5
+
+    def list_textures(self) -> list:
+        """Texture assets a structure's materials can bind to.
+
+        Only the ones whose head revision compiles: offering a broken texture
+        as a binding target wastes a round when the building references it.
+        """
+        out = []
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM projects ORDER BY name").fetchall()
+            for p in rows:
+                c = conn.execute(
+                    "SELECT dsl, status FROM commits WHERE id=?", (p["head_commit_id"],)
+                ).fetchone()
+                if not c or c["status"] != "PASS":
+                    continue
+                # What the document says it is beats what the project is
+                # filed as: a model sitting under track=texture is a model,
+                # and offering it as a binding target would be a lie.
+                kind = detect_kind_from_source(c["dsl"] or "") or p["track"]
+                if kind != "texture":
+                    continue
+                hexes = palette_of(c["dsl"] or "")
+                out.append({"name": p["name"],
+                            "folder": (p["folder"] if "folder" in p.keys() else "") or "",
+                            "colors": hexes[:4]})
+        return out
+
+    def list_folders(self) -> list:
+        with self._connect() as conn:
+            try:
+                rows = conn.execute("SELECT path FROM folders ORDER BY path").fetchall()
+            except Exception:
+                return []
+        return [r["path"] for r in rows]
+
+    def create_folder(self, payload: dict) -> dict:
+        """Make a folder that exists before anything is in it.
+
+        Folders used to be nothing but the path string each asset carried, so
+        an empty one could not exist and there was no way to make a sub-folder
+        before you had something to put in it. They are rows now; the tree
+        still merges them with the paths assets imply.
+        """
+        path = normalize_folder(payload.get("path"))
+        if not path:
+            raise ValueError("A folder needs a name.")
+        depth = len(path.split("/"))
+        if depth > self.MAX_FOLDER_DEPTH:
+            raise ValueError(
+                f"{depth} levels deep - the limit is {self.MAX_FOLDER_DEPTH}. "
+                "Past that a tree is harder to read than a flat list.")
+        with self._connect() as conn:
+            # Every parent on the way down exists too, so a path typed in one
+            # go does not leave gaps in the tree.
+            segs = path.split("/")
+            for i in range(len(segs)):
+                p = "/".join(segs[:i + 1])
+                conn.execute(
+                    "INSERT OR IGNORE INTO folders (path, created_at) VALUES (?, ?)",
+                    (p, now_iso()))
+        return self.get_bootstrap_state()
+
+    def delete_folder(self, payload: dict) -> dict:
+        """Forget a folder row. Assets filed under it are not touched - they
+        keep their path, so the folder simply goes back to being derived."""
+        path = normalize_folder(payload.get("path"))
+        with self._connect() as conn:
+            conn.execute("DELETE FROM folders WHERE path=? OR path LIKE ?",
+                         (path, path + "/%"))
+        return self.get_bootstrap_state()
+
+    def list_blocks(self) -> list:
+        with self._connect() as conn:
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM blocks ORDER BY created_at DESC"
+                ).fetchall()
+            except Exception:
+                return []
+        return [
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "kind": r["kind"],
+                "source": r["source"],
+                "note": r["note"],
+                "origin": r["origin"],
+                "createdAt": r["created_at"],
+            }
+            for r in rows
+        ]
+
+    def save_block(self, payload: dict) -> dict:
+        source = (payload.get("source") or "").strip()
+        if not source:
+            raise ValueError("A block needs source to reuse. Nothing was selected.")
+        name = (payload.get("name") or "").strip() or f"block_{uuid.uuid4().hex[:4]}"
+        kind = (payload.get("kind") or "").lower()
+        if kind not in TRACK_KINDS:
+            kind = detect_kind_from_source(source) or ""
+        bid = "b" + uuid.uuid4().hex[:8]
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO blocks (id, name, kind, source, note, origin, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (bid, name, kind, source, (payload.get("note") or "").strip(),
+                 (payload.get("origin") or "").strip(), now_iso()),
+            )
+        return self.get_bootstrap_state()
+
+    def delete_block(self, payload: dict) -> dict:
+        bid = (payload.get("id") or "").strip()
+        with self._connect() as conn:
+            conn.execute("DELETE FROM blocks WHERE id=?", (bid,))
+        return self.get_bootstrap_state()
+
+    def retarget_texture(self, old_name: str, new_name: str) -> list:
+        """Follow a renamed texture into every building that binds to it.
+
+        A structure's materials name textures by the asset name they live
+        under, so renaming a texture breaks every building that referenced it
+        - silently, because the document still compiles. The reference is
+        rewritten and committed as its own revision, which is auditable and
+        reversible, rather than edited in place behind the operator's back.
+        """
+        if not old_name or not new_name or old_name == new_name:
+            return []
+        pat = re.compile(r"^(\s*material\s+\S+\s+)" + re.escape(old_name) + r"\b",
+                         re.M)
+        touched = []
+        with self._connect() as conn:
+            rows = conn.execute("SELECT id, name, head_commit_id FROM projects").fetchall()
+            heads = {r["id"]: conn.execute(
+                "SELECT id, dsl FROM commits WHERE id=?", (r["head_commit_id"],)).fetchone()
+                for r in rows}
+        for r in rows:
+            c = heads.get(r["id"])
+            if not c or not c["dsl"]:
+                continue
+            if detect_kind_from_source(c["dsl"]) != "structure":
+                continue
+            if not pat.search(c["dsl"]):
+                continue
+            fixed = pat.sub(lambda m: m.group(1) + new_name, c["dsl"])
+            try:
+                self.compile_and_save({
+                    "projectId": r["id"], "rawAiResponse": fixed, "mode": "edit",
+                    "note": f"Texture {old_name} renamed to {new_name}",
+                    "userPrompt": f"Reference update: {old_name} -> {new_name}",
+                })
+                touched.append(r["name"])
+            except Exception:
+                pass
+        return touched
+
+    def set_project_track(self, payload: dict) -> dict:
+        """Change an asset's track after the fact, AUTO included.
+
+        A project is not a commitment to one kind of asset for life: a prop
+        that turns out to need bones becomes a model without being rebuilt,
+        and AUTO lets one project hold all three.
+        """
+        pid = (payload.get("projectId") or payload.get("project_id") or "").strip()
+        track = (payload.get("track") or "").lower()
+        if track not in TRACK_KINDS and track != "auto":
+            raise ValueError(f"Unknown track {track!r}")
+        with self._connect() as conn:
+            row = conn.execute("SELECT id FROM projects WHERE id=?", (pid,)).fetchone()
+            if not row:
+                raise ValueError(f"No such asset {pid!r}")
+            conn.execute(
+                "UPDATE projects SET track=?, icon=?, updated_at=? WHERE id=?",
+                (track, TRACK_ICONS.get(track, "view_in_ar"), now_iso(), pid),
+            )
+        return self.get_bootstrap_state()
+
+    def create_projects_bulk(self, payload: dict) -> dict:
+        """Create many assets from one pasted list.
+
+        Each line is one asset. `name: brief` names it; a bare line is a brief
+        and the asset adopts its name from the document it compiles. Every
+        asset lands in the same folder on the same track, which is the whole
+        point - a batch is a set of siblings.
+        """
+        raw = payload.get("items")
+        if isinstance(raw, str):
+            raw = [raw]
+        lines = []
+        for chunk in (raw or []):
+            for line in str(chunk).splitlines():
+                line = line.strip().lstrip("-*\u2022 ").strip()
+                if line:
+                    lines.append(line)
+        if not lines:
+            raise ValueError("Nothing to create - the list was empty.")
+        if len(lines) > 40:
+            raise ValueError(f"{len(lines)} items is more than one batch should carry. Keep it under 40.")
+        track = (payload.get("track") or "auto").lower()
+        folder = normalize_folder(payload.get("folder"))
+        made = []
+        for line in lines:
+            name, brief = "", line
+            m = re.match(r"^([A-Za-z0-9 _\-]{1,40}?)\s*[:\u2013\u2014]\s*(.+)$", line)
+            if m:
+                name, brief = m.group(1).strip(), m.group(2).strip()
+            pid = self._insert_project({"name": name, "track": track, "brief": brief, "folder": folder})
+            made.append(pid)
+        boot = self.get_bootstrap_state()
+        boot["created"] = made
+        return boot
+
+    # ------------------------------------------------------------------
+    # REVISIONS AS FIRST-CLASS THINGS: promote, delete, export by version
+    # ------------------------------------------------------------------
+    def promote_commits(self, payload: dict) -> dict:
+        """Lift revisions out of an asset and make each one its own asset.
+
+        Making a new version is two clicks and making a new asset is a modal,
+        so operators do the sane thing and explore separate designs as versions
+        of whatever happened to be open. That is good practice, not a mistake -
+        it just needs an exit. Each promoted revision keeps its document exactly
+        and becomes v1 of a new asset; the original is left untouched, because a
+        promotion is a copy, not a move.
+        """
+        pid = (payload.get("projectId") or "").strip()
+        cids = [str(x) for x in (payload.get("commitIds") or []) if str(x).strip()]
+        folder = payload.get("folder")
+        track = (payload.get("track") or "").lower()
+        if not cids:
+            raise ValueError("No revisions selected.")
+
+        with self._connect() as conn:
+            proj = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+            if not proj:
+                raise ValueError("Project not found")
+            rows = conn.execute(
+                f"SELECT * FROM commits WHERE project_id=? AND id IN ({','.join('?' * len(cids))}) ORDER BY seq",
+                [pid] + cids).fetchall()
+        if not rows:
+            raise ValueError("Those revisions are not in this asset.")
+
+        if folder is None:
+            folder = (proj["folder"] if "folder" in proj.keys() else "") or ""
+        if track not in TRACK_KINDS and track != "auto":
+            track = proj["track"]
+
+        # A promotion must not steal the operator's place: _insert_project
+        # makes each new asset active, so the asset they were working in is
+        # restored once the batch is done.
+        was_active = (self.get_settings() or {}).get("activeProjectId") or pid
+        results = []
+        for r in rows:
+            try:
+                # A promoted revision usually carries the parent's own name in
+                # its document, and `guard_drone_7f2a` tells nobody anything -
+                # so a name that would collide becomes `guard_drone_v4`, which
+                # says exactly where it came from.
+                declared = document_name(r["dsl"] or "")
+                name = declared if declared and declared != proj["name"] else f"{proj['name']}_{r['tag']}"
+                new_pid = self._insert_project({
+                    "name": name,
+                    "track": track,
+                    "brief": f"Promoted from {proj['name']} {r['tag']}",
+                    "folder": folder,
+                    "source": r["dsl"] or "",
+                    "note": f"Promoted from {proj['name']} {r['tag']} - {(r['note'] or '')[:48]}",
+                })
+                results.append({"from": r["tag"], "to": new_pid, "ok": True, "error": ""})
+            except Exception as exc:
+                results.append({"from": r["tag"], "to": "", "ok": False, "error": str(exc)})
+
+        self.update_settings({"activeProjectId": was_active})
+        boot = self.get_bootstrap_state()
+        boot["promoted"] = results
+        return boot
+
+    def delete_commits(self, payload: dict) -> dict:
+        """Remove revisions, keeping the history connected.
+
+        A revision is not a leaf: deleting one in the middle would orphan
+        everything after it, so its children are re-parented onto its parent
+        and any branch or project head pointing at it falls back to the newest
+        revision left on that branch. An asset always keeps at least one.
+        """
+        pid = (payload.get("projectId") or "").strip()
+        cids = [str(x) for x in (payload.get("commitIds") or []) if str(x).strip()]
+        if not cids:
+            raise ValueError("No revisions selected.")
+        results = []
+        with self._connect() as conn:
+            proj = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+            if not proj:
+                raise ValueError("Project not found")
+            total = conn.execute(
+                "SELECT COUNT(*) AS n FROM commits WHERE project_id=?", (pid,)).fetchone()["n"]
+            if len(cids) >= total:
+                raise ValueError(
+                    f"That would delete every revision of {proj['name']} ({total}). "
+                    "An asset has to keep one."
+                )
+            for cid in cids:
+                row = conn.execute(
+                    "SELECT * FROM commits WHERE project_id=? AND id=?", (pid, cid)).fetchone()
+                if not row:
+                    results.append({"tag": cid, "ok": False, "error": "not in this asset"})
+                    continue
+                conn.execute(
+                    "UPDATE commits SET parent_id=? WHERE project_id=? AND parent_id=?",
+                    (row["parent_id"], pid, cid))
+                conn.execute(
+                    "UPDATE commits SET merge_parent_id=? WHERE project_id=? AND merge_parent_id=?",
+                    (row["parent_id"], pid, cid))
+                conn.execute("DELETE FROM commits WHERE project_id=? AND id=?", (pid, cid))
+                conn.execute("DELETE FROM chat_history WHERE project_id=? AND commit_id=?", (pid, cid))
+                fallback = conn.execute(
+                    "SELECT id FROM commits WHERE project_id=? AND branch=? ORDER BY seq DESC LIMIT 1",
+                    (pid, row["branch"])).fetchone()
+                if not fallback:
+                    fallback = conn.execute(
+                        "SELECT id FROM commits WHERE project_id=? ORDER BY seq DESC LIMIT 1",
+                        (pid,)).fetchone()
+                    conn.execute("DELETE FROM branches WHERE project_id=? AND name=?", (pid, row["branch"]))
+                else:
+                    conn.execute(
+                        "UPDATE branches SET head_commit_id=? WHERE project_id=? AND name=? AND head_commit_id=?",
+                        (fallback["id"], pid, row["branch"], cid))
+                if proj["head_commit_id"] == cid and fallback:
+                    nb = conn.execute("SELECT branch FROM commits WHERE id=?", (fallback["id"],)).fetchone()
+                    conn.execute(
+                        "UPDATE projects SET head_commit_id=?, active_branch=?, updated_at=? WHERE id=?",
+                        (fallback["id"], nb["branch"] if nb else "main", now_iso(), pid))
+                results.append({"tag": row["tag"], "ok": True, "error": ""})
+                try:
+                    shutil.rmtree(self.projects_dir / pid / "commits" / cid, ignore_errors=True)
+                except Exception:
+                    pass
+        try:
+            self._write_project_manifest(pid)
+        except Exception:
+            pass
+        boot = self.get_bootstrap_state()
+        boot["deleted"] = results
+        return boot
+
+    def build_bulk_zip(self, project_ids: list, fmt: str, scope: str = "head",
+                       commit_ids: list = None) -> tuple:
+        """One zip holding whichever revisions of the selection were asked for.
+
+        Exporting eleven assets one click at a time is not a workflow, so the
+        selection exports as a set. `scope` decides how much of each asset's
+        history comes along, because both answers are right at different times:
+        the latest revision is what goes into the game, and the whole history is
+        what you hand to someone else or keep as a backup.
+
+          head      the current head of each asset (the default)
+          all       every revision of each asset, each in its own folder
+          picked    only the revisions named in commit_ids
+
+        An asset whose revision does not compile is skipped and named in
+        MANIFEST.txt rather than silently dropped.
+        """
+        import io
+        import zipfile
+
+        fmt = (fmt or "obj").lower()
+        scope = (scope or "head").lower()
+        if scope not in ("head", "all", "picked"):
+            scope = "head"
+        picked = {str(x) for x in (commit_ids or [])}
+        buf = io.BytesIO()
+        written, skipped = [], []
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for pid in project_ids:
+                try:
+                    with self._connect() as conn:
+                        p = conn.execute("SELECT * FROM projects WHERE id=?", (pid,)).fetchone()
+                        if not p:
+                            skipped.append(f"{pid} - no such asset")
+                            continue
+                        if scope == "all":
+                            rows = conn.execute(
+                                "SELECT * FROM commits WHERE project_id=? ORDER BY seq", (pid,)).fetchall()
+                        elif scope == "picked":
+                            rows = [r for r in conn.execute(
+                                "SELECT * FROM commits WHERE project_id=? ORDER BY seq", (pid,)).fetchall()
+                                if r["id"] in picked]
+                        else:
+                            rows = [r for r in [conn.execute(
+                                "SELECT * FROM commits WHERE id=?", (p["head_commit_id"],)).fetchone()] if r]
+                    if not rows:
+                        skipped.append(f"{pid} - no revisions matched the version scope")
+                        continue
+                    many = len(rows) > 1
+                    for c in rows:
+                        if c["status"] != "PASS":
+                            skipped.append(f"{pid} {c['tag']} - does not compile")
+                            continue
+                        # A mixed selection has no single right format: a texture
+                        # has no .obj and a model has no .png. NATIVE gives every
+                        # asset the format its own kind actually exports, so one
+                        # click works on a folder holding all three tracks.
+                        want = fmt
+                        if fmt in ("native", "auto"):
+                            k = detect_kind_from_source(c["dsl"] or "")
+                            want = "png" if k == "texture" else "obj"
+                        data, _ctype, fname = self.build_export_bytes(pid, c["id"], want)
+                        inner = f"{pid}/{c['tag']}/{fname}" if many else f"{pid}/{fname}"
+                        zf.writestr(inner, data)
+                        written.append(f"{pid} - {fname} ({c['tag']})")
+                except Exception as exc:
+                    skipped.append(f"{pid} - {exc}")
+            manifest = ["DESIGNBRIDGE STUDIO - BULK EXPORT",
+                        f"format: {fmt}   versions: {scope}",
+                        f"written: {len(written)}   skipped: {len(skipped)}",
+                        ""]
+            manifest += ["EXPORTED"] + [f"  {w}" for w in written] if written else ["EXPORTED", "  (none)"]
+            if skipped:
+                manifest += ["", "SKIPPED"] + [f"  {s}" for s in skipped]
+            zf.writestr("MANIFEST.txt", "\n".join(manifest) + "\n")
+        return buf.getvalue(), "application/zip", f"designbridge_selection_{fmt}.zip"
+
+    def _remember_folder(self, folder: str) -> None:
+        folder = normalize_folder(folder)
+        if not folder:
+            return
+        try:
+            self.create_folder({"path": folder})
+        except Exception:
+            pass
+
+    def _insert_project(self, payload: dict) -> str:
         # The name is optional. designbridge documents carry their own name
         # (model "stalker"), so an unnamed asset gets a placeholder now and
         # adopts the real name from the document on first successful compile.
         raw_name = (payload.get("name") or "").strip()
-        track = payload.get("track") or "model"
+        track = (payload.get("track") or "model").lower()
+        if track not in TRACK_KINDS and track != "auto":
+            track = "model"
+        # An AUTO asset still needs a concrete grammar for its starter
+        # document; the brief decides which, and the asset stays AUTO.
+        seed_kind = track if track in TRACK_KINDS else (
+            guess_kind_from_text(payload.get("brief") or raw_name) or "model")
         auto_named = not raw_name
         if auto_named:
-            raw_name = f"untitled_{track}_{uuid.uuid4().hex[:4]}"
+            raw_name = f"untitled_{seed_kind}_{uuid.uuid4().hex[:4]}"
         pid = safe_slug(raw_name)
-        folder = (payload.get("folder") or "").strip()
-        brief = (payload.get("brief") or f"Create a clean {track} asset named {pid}").strip()
-        icon_map = {"model": "view_in_ar", "prop": "precision_manufacturing", "texture": "texture"}
-        icon = icon_map.get(track, "view_in_ar")
+        folder = normalize_folder(payload.get("folder"))
+        self._remember_folder(folder)
+        brief = (payload.get("brief") or f"Create a clean {seed_kind} asset named {pid}").strip()
+        icon = TRACK_ICONS.get(track, "view_in_ar")
         cid = "c" + uuid.uuid4().hex[:6]
         ts = now_iso()
 
@@ -1171,7 +2272,12 @@ class StudioStorage:
             # A new project opens on a real, compiling starter document rather
             # than a stub, so the viewport has something to show and the
             # operator can see valid grammar before the first AI round.
-            starter = STARTER_SOURCES.get(track, STARTER_SOURCES["model"]).replace("__NAME__", pid)
+            # A document handed in by the caller - a parsed AI output, say -
+            # becomes v1 itself, so an intake does not leave a starter stub
+            # sitting in front of the real first revision.
+            given = (payload.get("source") or "").strip()
+            starter = given + "\n" if given else \
+                STARTER_SOURCES.get(seed_kind, STARTER_SOURCES["model"]).replace("__NAME__", pid)
             try:
                 res = compile_source(starter)
                 status, report = res.status, res.report
@@ -1184,7 +2290,8 @@ class StudioStorage:
             init_commit = {
                 "id": cid, "tag": "v1", "branch": "main", "parentId": None, "mergeParentId": None,
                 "time": now_hhmm(), "status": status,
-                "note": f"Starter {track} - brief: {brief[:80]}",
+                "note": (payload.get("note") or f"Intake - {brief[:72]}") if given
+                        else f"Starter {track} - brief: {brief[:80]}",
                 "bounds": bounds, "struct": struct, "anim": anim, "errors": errors,
                 "params": {},
                 "report": report,
@@ -1210,10 +2317,27 @@ class StudioStorage:
 
         self.update_settings({"activeProjectId": pid, "activeMode": "new_take"})
         self._write_project_manifest(pid)
+        return pid
+
+    def create_project(self, payload: dict) -> dict:
+        self._insert_project(payload)
         return self.get_bootstrap_state()
 
     def rename_project(self, project_id: str, new_name: str, folder=None) -> dict:
         ts = now_iso()
+        remember = ""
+        was_name, was_texture = "", False
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT name, head_commit_id FROM projects WHERE id=?", (project_id,)).fetchone()
+                if row:
+                    was_name = row["name"]
+                    hc = conn.execute("SELECT dsl FROM commits WHERE id=?",
+                                      (row["head_commit_id"],)).fetchone()
+                    was_texture = bool(hc) and detect_kind_from_source(hc["dsl"] or "") == "texture"
+        except Exception:
+            pass
         with self._connect() as conn:
             if not conn.execute("SELECT 1 FROM projects WHERE id=?", (project_id,)).fetchone():
                 raise ValueError("Project not found")
@@ -1222,9 +2346,20 @@ class StudioStorage:
                              (safe_slug(new_name), ts, project_id))
             if folder is not None:
                 conn.execute("UPDATE projects SET folder=?, updated_at=? WHERE id=?",
-                             (str(folder).strip(), ts, project_id))
+                             (normalize_folder(folder), ts, project_id))
+                remember = normalize_folder(folder)
+        if folder is not None and remember:
+            self._remember_folder(remember)
         self._write_project_manifest(project_id)
-        return self.get_bootstrap_state()
+        # A renamed texture is followed into every building that binds to it,
+        # so a rename cannot leave a dangling reference that still compiles.
+        retargeted = []
+        if was_texture and new_name and safe_slug(new_name) != was_name:
+            retargeted = self.retarget_texture(was_name, safe_slug(new_name))
+        boot = self.get_bootstrap_state()
+        if retargeted:
+            boot["retargeted"] = retargeted
+        return boot
 
     def duplicate_project(self, project_id: str) -> dict:
         ts = now_iso()
@@ -1442,7 +2577,7 @@ class StudioStorage:
             # compiled document, so the diagnostics panel reports measured
             # geometry instead of copying the parent commit's numbers forward.
             try:
-                result = self._compile_dsl(proj["track"], dsl, None)
+                result = self._compile_dsl(proj["track"], dsl, None, payload.get("style"))
                 status, report = result.status, result.report
                 errors, bounds, struct, anim = result.errors, result.bounds, result.struct, result.anim
                 # Re-measure against the declared shape budget and append the
@@ -1574,7 +2709,18 @@ class StudioStorage:
         if cdir.exists():
             shutil.rmtree(cdir, ignore_errors=True)
         export_artifacts(result, cdir, slug)
-        return {p.name: p.read_bytes() for p in sorted(cdir.iterdir()) if p.is_file()}
+        out = {}
+        for p in sorted(cdir.iterdir()):
+            if not p.is_file():
+                continue
+            blob = p.read_bytes()
+            # Every nested rig exports with its children displaced; repaired
+            # here on the way out so a download is correct in Blender and in
+            # the engine alike. See fix_glb_child_pivots.
+            if p.suffix.lower() == ".glb":
+                blob = fix_glb_child_pivots(blob)
+            out[p.name] = blob
+        return out
 
     def build_export_bytes(self, project_id: str, commit_id: str, fmt: str) -> tuple[bytes, str, str]:
         commit = self._commit_row(project_id, commit_id)
@@ -1765,6 +2911,10 @@ BUDGET = {
     "model":   {1: (8, 2),  2: (20, 4), 3: (48, 7), 4: (120, 12), 5: (320, 20)},
     "prop":    {1: (1, 1),  2: (2, 1),  3: (3, 2),  4: (5, 3),  5: (8, 4)},
     "texture": {1: (3, 0),  2: (4, 0),  3: (6, 0),  4: (9, 0),  5: (14, 0)},
+    # A structure is budgeted in statements, not cells: the whole point of the
+    # grammar is that ten lines make a building, so the limit that matters is
+    # how many volumes it takes to describe, not how many cells come out.
+    "structure": {1: (6, 2), 2: (12, 3), 3: (24, 5), 4: (40, 8), 5: (72, 12)},
 }
 # Largest allowed long:short ratio on a single box.
 ASPECT_CAP = {"cubic": 2.0, "mixed": 4.0, "elongated": 0.0}  # 0 = uncapped
@@ -1773,6 +2923,14 @@ DETAIL_NOTE = {
     "low": "Read as a silhouette from ten blocks away. Big forms only, no trim.",
     "medium": "Clear silhouette plus a few reading details. No fine filigree.",
     "high": "Dense surface detail is welcome, as long as the budget above allows it.",
+}
+
+# A tile has no silhouette, so the same three levels are said in the terms
+# that track actually has: how busy the surface is at 16x16.
+DETAIL_NOTE_TEXTURE = {
+    "low": "Flat and quiet. A base tone plus one variation; no fine speckle.",
+    "medium": "Readable surface at 16x16 - grain or wear, nothing per-pixel.",
+    "high": "Dense surface detail is welcome, as long as the layer budget allows it.",
 }
 
 
@@ -1880,7 +3038,8 @@ def style_constraints_text(kind: str, style: dict, bones: int = 0, brief: str = 
         else:
             out.append("  SYMMETRY: radial. Repeat the motif evenly around the vertical axis.")
 
-    out.append(f"  DETAIL: {s['detail']}. {DETAIL_NOTE[s['detail']]}")
+    notes = DETAIL_NOTE_TEXTURE if kind == "texture" else DETAIL_NOTE
+    out.append(f"  DETAIL: {s['detail']}. {notes[s['detail']]}")
     return "\n".join(out)
 
 
@@ -2136,14 +3295,21 @@ HOW TO WORK
 """
 
 
-def lock_dims_line(style: dict) -> str:
-    """The Shape Control values written as one readable clause."""
+def lock_dims_line(style: dict, kind: str = "model") -> str:
+    """The Shape Control values written as one readable clause.
+
+    Scoped by track, because proportions and symmetry are box controls: on a
+    texture they are not merely irrelevant, they actively mislead - a locked
+    'symmetry none' reads as an instruction not to make a symmetrical tile.
+    """
     t = normalize_style(style)
-    return (f"complexity {t['complexity']} of 5, {t['detail']} detail, "
-            f"{t['proportions']} proportions, symmetry {t['symmetry']}")
+    bits = [f"complexity {t['complexity']} of 5", f"{t['detail']} detail"]
+    if kind in ("model", "prop"):
+        bits += [f"{t['proportions']} proportions", f"symmetry {t['symmetry']}"]
+    return ", ".join(bits)
 
 
-def style_lock_text(lock: str, style: dict = None) -> str:
+def style_lock_text(lock: str, style: dict = None, kind: str = "model") -> str:
     """The standing art direction, marked as binding across every round.
 
     This is repeated in full on every prompt rather than stated once at the
@@ -2174,8 +3340,10 @@ def style_lock_text(lock: str, style: dict = None) -> str:
     if style:
         lines += [
             "",
-            "  ALSO LOCKED - the form rules under SHAPE BUDGET are part of this lock:",
-            "    " + lock_dims_line(style) + ".",
+            ("  ALSO LOCKED - the layer budget under SHAPE BUDGET is part of this lock:"
+             if kind == "texture" else
+             "  ALSO LOCKED - the form rules under SHAPE BUDGET are part of this lock:"),
+            "    " + lock_dims_line(style, kind) + ".",
             "  Those are not this round's preference. They hold for every asset in",
             "  the project, and the budget there is a hard ceiling, not a target.",
         ]
@@ -2312,6 +3480,7 @@ def style_spec_to_lock(spec: dict) -> dict:
     """
     warn = []
     lines = []
+    raw_spec = spec
 
     name = str(spec.get("name") or "").strip()
 
@@ -2420,9 +3589,496 @@ def style_spec_to_lock(spec: dict) -> dict:
         "name": name,
         "lock": "\n".join(lines).strip(),
         "style": style,
+        # The parsed spec, so the client can render the palette and the prose
+        # visually instead of asking anyone to read the JSON. detail is
+        # normalised to {level, notes} here because the lock-building pass
+        # flattens it to its enum.
+        "spec": _display_spec(raw_spec),
         "extras": sorted(extras.keys()),
         "warnings": warn,
     }
+
+
+def _display_spec(spec: dict) -> dict:
+    out = dict(spec)
+    det = spec.get("detail")
+    if isinstance(det, dict):
+        lvl = str(det.get("level") or det.get("value") or "").strip().lower()
+        out["detail"] = {
+            "level": lvl if lvl in DETAIL_NOTE else "",
+            "notes": str(det.get("notes") or det.get("note") or "").strip(),
+        }
+    return out
+
+
+_DOC_START_RE = re.compile(r"^(model|texture|design|structure)\s+[\"\w]")
+_DOC_NAME_RE = re.compile(r"^(?:model|texture|design|structure)\s+\"?([A-Za-z0-9_\-]+)\"?")
+
+
+def _is_source(block: str) -> bool:
+    """designbridge's own sniffer does not know the structure track, so the
+    splitter asks this instead: does any line open a document?"""
+    for raw in (block or "").splitlines():
+        if _DOC_START_RE.match(raw.strip()):
+            return True
+    return _looks_like_source(block)
+
+
+def document_name(dsl: str) -> str:
+    """The name the document gives itself, which is the only name that counts."""
+    for raw in (dsl or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith("//"):
+            continue
+        m = _DOC_NAME_RE.match(line)
+        return m.group(1) if m else ""
+    return ""
+
+
+def split_documents(text: str) -> list:
+    """Cut one pasted blob into the separate documents it holds.
+
+    A session with a text AI produces several documents at once - six props in
+    one answer, or three takes on the same mob - and pasting them back one at a
+    time is the slowest part of the loop. Fenced blocks are preferred because
+    that is what the output contract asks for; failing that, each top-level
+    declaration (`model x`, `design y`, `texture z`) starts a new document, so
+    a bare run of documents still separates correctly.
+    """
+    text = (text or "").replace("\r\n", "\n")
+    if not text.strip():
+        return []
+
+    docs = []
+    fenced = re.findall(r"```[a-zA-Z0-9_\-]*\n(.*?)```", text, re.S)
+    for block in fenced:
+        inner = SENTINEL_RE.search(block)
+        if inner:
+            block = inner.group(1)
+        if _is_source(block):
+            docs.append(block.strip("\n").rstrip())
+    if docs:
+        return docs
+
+    # No fences. Legacy sentinels next, then raw declarations.
+    sent = re.findall(r"<<<\s*DESIGN.*?>>>(.*?)<<<\s*/?\s*DESIGN\s*>>>", text, re.S)
+    for block in sent:
+        if _is_source(block):
+            docs.append(block.strip("\n").rstrip())
+    if docs:
+        return docs
+
+    current = []
+    for raw in text.split("\n"):
+        if _DOC_START_RE.match(raw.strip()) and current and any(l.strip() for l in current):
+            docs.append("\n".join(current).strip("\n").rstrip())
+            current = [raw]
+        else:
+            current.append(raw)
+    if current and any(l.strip() for l in current):
+        docs.append("\n".join(current).strip("\n").rstrip())
+    return [d for d in docs if _is_source(d)]
+
+
+TRACK_KINDS = ("model", "prop", "texture", "structure")
+
+TRACK_ICONS = {
+    "model": "view_in_ar",
+    "prop": "precision_manufacturing",
+    "texture": "texture",
+    "structure": "domain",
+    "auto": "auto_awesome",
+}
+
+# The grammar names its track with the first keyword of the document, and the
+# prop grammar spells that keyword `design`, not `prop` - so the map is not
+# the identity it looks like it should be.
+_KIND_DECL_RE = re.compile(r"^(model|prop|texture|design|structure)\b")
+_DECL_TO_KIND = {"model": "model", "prop": "prop", "texture": "texture",
+                 "design": "prop", "structure": "structure"}
+
+_KIND_HINTS = {
+    "texture": ("texture", "tileable", "seamless", "albedo", "swatch", "pattern",
+                "wallpaper", "fabric", "noise", "gradient", "decal", "tile"),
+    "prop": ("prop", "lathe", "turned", "revolve", "sweep", "profile", "vase",
+             "bottle", "barrel", "pillar", "column", "goblet", "cup", "bollard",
+             "canister", "flask", "spindle", "finial"),
+    "model": ("character", "creature", "rig", "rigged", "bone", "skeleton",
+              "animation", "walk cycle", "vehicle", "robot", "mech", "humanoid",
+              "voxel", "blockout", "weapon", "turret", "drone"),
+    "structure": ("building", "structure", "ruin", "ruins", "hall", "tower",
+                  "bunker", "bridge", "room", "architecture", "wall section",
+                  "foundry hall", "shrine", "outpost", "station", "aqueduct",
+                  "jigsaw", "wfc", "floorplan", "colonnade"),
+}
+
+
+_HEX_RE = re.compile(r"#[0-9a-fA-F]{6}\b")
+
+
+def _rgb(h: str) -> tuple:
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def palette_of(lock_text: str) -> list:
+    """Every hex colour named in the style lock, in the order it appears."""
+    seen, out = set(), []
+    for h in _HEX_RE.findall(lock_text or ""):
+        u = h.upper()
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+def nearest_in_palette(h: str, palette: list) -> tuple:
+    """(nearest allowed hex, distance). Plain RGB distance is enough here -
+    the palettes are small and well separated, and a perceptual metric would
+    only move the answer on ties nobody can see."""
+    target = _rgb(h)
+    best, bd = "", 1e9
+    for p in palette:
+        d = sum((target[i] - _rgb(p)[i]) ** 2 for i in range(3)) ** 0.5
+        if d < bd:
+            best, bd = p, d
+    return best, bd
+
+
+# Behaviour that is not in the grammar reference and that models have
+# repeatedly guessed wrong. Measured against the compiler, not inferred.
+# Kept short on purpose: this is the shortlist of things that actually bite,
+# not a second manual.
+STRUCTURE_GRAMMAR = """THE STRUCTURE GRAMMAR - write volumes, never cells
+
+  structure <name> size=(x,y,z) seed=<n>
+      One per document, first line. size is the bounding volume in cells.
+      seed makes every collapse and rubble pass repeatable.
+
+  material <alias> <texture_name> color=#RRGGBB
+      Bind a name you will use below to a texture asset in the workspace.
+      color is for the preview only; the texture is what the game shows.
+      Declare every material before you use it.
+
+  room (x0,y0,z0) (x1,y1,z1) walls=<alias> floor=<alias> [ceiling=<alias>|none]
+       [wallform=<form>] [floorform=<form>]
+      A hollow box: four walls, a floor, optionally a ceiling. This is the
+      main tool - most buildings are two or three rooms.
+
+  door   <north|south|east|west> at=(u,v) width=<n> height=<n>
+  window <north|south|east|west> at=(u,v) width=<n> height=<n> [every=<n>]
+      Carve an opening out of the room declared immediately above. every=
+      repeats the opening along that wall, which is how you get a row of
+      windows in one line.
+
+  fill (x0,y0,z0) (x1,y1,z1) material=<alias> [form=<form>] [ori=<n>] [hollow=true]
+      A solid or hollow block of cells. Roofs, platforms, plinths, buttresses.
+
+  colonnade (x,y,z) to=(x,y,z) material=<alias> [form=column] [every=<n>] [height=<n>]
+      Evenly spaced uprights between two points.
+
+  stairs (x,y,z) to=(x,y,z) material=<alias> [facing=<north|east|south|west>]
+      A run of stair cells climbing from one point to another.
+
+  place (x,y,z) form=<form> material=<alias> [ori=<n>] [clad=<alias>]
+        [cladmask=+X,-Z] [damage=0..3]
+      One cell, when nothing else fits.
+
+  collapse <roof|walls|all> amount=0..1 [seed=<n>]
+  rubble   amount=0..1 [material=<alias>] [y=<n>]
+  damage   amount=0..1
+      What turns an intact building into a ruin. collapse removes cells,
+      biased toward the top; rubble scatters broken plates on the floor;
+      damage raises the crack stage on what is left. All deterministic.
+
+THE TWELVE FORMS - every cell is one of these, rotated
+
+  cube           a full block                       ori 0 only
+  slab_half      half height                        ori 0-5
+  plate_quarter  quarter height, carries no load    ori 0-5
+  stair          a step                             ori 0-11
+  slope_45       a 45-degree wedge                  ori 0-11
+  slope_corner   a corner wedge                     ori 0-23
+  chamfer_edge   a cube with one edge cut           ori 0-11
+  column         a square pillar, strong vertically ori 0-2
+  girder         a thin beam, spans horizontally    ori 0-2
+  corbel_arch    an arch haunch, extends a span     ori 0-11
+  channel_trough a carved water channel             ori 0-11
+  trim_edge      a thin edge moulding               ori 0-11
+
+  An orientation outside a form's range is rejected. Cladding is only legal
+  on faces that are full squares on the host form.
+
+WHAT MAKES A BUILDING READ
+
+  Massing before detail. Get the volumes right, then add a colonnade.
+  A ruin reads as a ruin because of what is missing, not what is added:
+  collapse the roof before you scatter rubble.
+  Keep collapse amount at or under 0.5 - beyond that, pieces float with
+  nothing holding them up, and the report will say so.
+"""
+
+
+GOTCHAS = {
+    "texture": (
+        "KNOWN BEHAVIOUR - measured, not guessed\n"
+        "  These layers DO tile seamlessly: fill, brick, checker, stripes, scatter,\n"
+        "  gradient, dither. brick staggers its rows by half a brick by default.\n"
+        "  These DO NOT tile: noise, veins (both use unwrapped lattice noise), and\n"
+        "  bevel, outline, border (they draw on the edges of the tile itself).\n"
+        "  A muddy repeating texture is almost always a noise layer seaming at every\n"
+        "  edge. For variation that tiles, use scatter, dither, or brick jitter=.\n"
+        "  Use bevel or outline only on a tile meant to read as one panel - a plate,\n"
+        "  a sign, a hatch - never on ground or wall.\n"
+        "  veins amount= is a THRESHOLD, not a density: 0.12 is the default, 0.25 is\n"
+        "  already a wash, 0.5 floods the whole tile one colour."
+    ),
+    "model": (
+        "KNOWN BEHAVIOUR - measured, not guessed\n"
+        "  Coordinates are voxels; 16 voxels = 1 metre = 1 block. Fractions are legal.\n"
+        "  +X is the model's left seen from the front, Y is up, -Z is its facing.\n"
+        "  The ground is y=0 and the model should touch it exactly.\n"
+        "  Bone pivots are ABSOLUTE, not relative to the parent. Keep the root bone's\n"
+        "  pivot at (0,0,0): a child under a non-zero parent pivot comes out displaced\n"
+        "  in the .glb export (the engine .boxmodel.json is fine either way).\n"
+        "  Two keys for one bone at one time are NOT merged - write a single key\n"
+        "  carrying both rot= and pos=. Keys interpolate linearly, with no easing.\n"
+        "  A bone with no keys still follows its parent, which is why limbs must be\n"
+        "  parented: an unparented leg stays standing when the body kneels."
+    ),
+    "prop": (
+        "KNOWN BEHAVIOUR - measured, not guessed\n"
+        "  A part accepts at=, rot=, rotate=, scale= and mirror= - rotation and\n"
+        "  mirroring are available on this track, unlike the voxel model track.\n"
+        "  Fractional values are legal everywhere a number is."
+    ),
+    "structure": (
+        "KNOWN BEHAVIOUR - measured, not guessed\n"
+        "  Write volumes, never cells. A 24x12x24 building is 7000 cells; ten\n"
+        "  statements describe it. room, fill, colonnade and stairs are the tools.\n"
+        "  door and window carve out of the room declared immediately above them.\n"
+        "  collapse and rubble turn an intact building into a ruin, and they are\n"
+        "  deterministic: the same seed gives the same ruin every time.\n"
+        "  Cells not connected to the ground are reported - a collapse amount much\n"
+        "  over 0.5 leaves islands that would fall the moment it spawned.\n"
+        "  Declare every material before use, with a color= for the preview and the\n"
+        "  name of the texture asset it binds to in the game."
+    ),
+}
+
+
+CORE_12 = ["cube", "slab_half", "plate_quarter", "stair", "slope_45",
+           "slope_corner", "chamfer_edge", "column", "girder", "corbel_arch",
+           "channel_trough", "trim_edge"]
+
+
+def textures_block(textures: list) -> str:
+    """The texture assets a structure may bind its materials to.
+
+    A building names textures by the asset name they live under, so a model
+    writing `material wall soot_iron_plate` is making a claim about the
+    workspace. Listing what is actually there turns that from a guess into a
+    choice - and a material bound to a name that does not exist is a broken
+    building nobody notices until it spawns.
+    """
+    if not textures:
+        return ("TEXTURES AVAILABLE - none yet\n"
+                "  This workspace has no compiling texture assets, so invent material\n"
+                "  names that describe the surface you want and give each a color=.\n"
+                "  The textures can be made afterwards under the names you chose.")
+    lines = ["TEXTURES AVAILABLE - bind materials to these names and no others"]
+    for t in textures[:40]:
+        where = f"  [{t['folder']}]" if t.get("folder") else ""
+        cols = ("  " + " ".join(t.get("colors") or [])) if t.get("colors") else ""
+        lines.append(f"  {t['name']}{where}{cols}")
+    if len(textures) > 40:
+        lines.append(f"  ... and {len(textures) - 40} more")
+    lines.append("")
+    lines.append("  material <alias> <one of the names above> color=#RRGGBB")
+    lines.append("  The color is for the preview only; the texture is what the game shows.")
+    return "\n".join(lines)
+
+
+def forms_block(allowed: list) -> str:
+    """The subset of the Core 12 this project permits."""
+    allowed = [f for f in (allowed or []) if f in CORE_12]
+    if not allowed or len(allowed) == len(CORE_12):
+        return ""
+    banned = [f for f in CORE_12 if f not in allowed]
+    return ("FORMS ALLOWED - this project uses a subset of the twelve\n"
+            "  Use only:  " + ", ".join(allowed) + "\n"
+            "  Never use: " + ", ".join(banned) + "\n"
+            "  A document using a form outside the list is rejected, not corrected.")
+
+
+def precedence_block(brief: str, lock_text: str, dsl: str = "") -> str:
+    """Say once which rule wins, and pre-compute the substitutions.
+
+    Both model reviews independently reported the same problem: the brief
+    names colours the lock forbids, and the model has to decide what to do
+    about it, then confess. That is a judgment call it should never have been
+    handed. The order is stated plainly, and every offending colour arrives
+    already mapped to the nearest legal one, so the substitution is a lookup
+    rather than a decision.
+    """
+    palette = palette_of(lock_text)
+    if not palette:
+        return ""
+    lines = [
+        "PRECEDENCE - which rule wins when two disagree",
+        "  1. The STYLE LOCK beats everything. It is the project, not a suggestion.",
+        "  2. THE BRIEF beats the examples and your own taste.",
+        "  3. Where the brief names a colour the lock does not allow, use the nearest",
+        "     locked colour. The substitutions are worked out for you below - do not",
+        "     improvise a different one, and do not use the brief's hex.",
+    ]
+    strays = []
+    for h in palette_of(brief) + palette_of(dsl):
+        if h in palette:
+            continue
+        near, d = nearest_in_palette(h, palette)
+        if near and not any(x[0] == h for x in strays):
+            strays.append((h, near, d))
+    if strays:
+        lines.append("")
+        lines.append("  COLOUR SUBSTITUTIONS - the brief asked for these; use the right column")
+        for h, near, d in strays:
+            how = "very close" if d < 24 else ("close" if d < 64 else "the nearest there is")
+            lines.append(f"    {h}  ->  {near}   ({how})")
+    else:
+        lines.append("")
+        lines.append("  Every colour mentioned this round is already in the palette.")
+    return "\n".join(lines)
+
+
+def fix_glb_child_pivots(data: bytes) -> bytes:
+    """Make child bone translations parent-relative in an exported .glb.
+
+    designbridge writes each bone's pivot verbatim as its glTF node
+    translation, but glTF composes a child's transform on top of its parent's,
+    so every nested bone comes out displaced by its parent's pivot. The
+    engine-native .boxmodel.json is absolute throughout and is correct; only
+    the .glb is affected, and only for rigs more than one bone deep - which is
+    every rig worth having.
+
+    Rather than edit designbridge, the fix is applied to the bytes on the way
+    out: walk the node tree and replace each child's translation with
+    translation - parent_translation. Vertex data is untouched, because the
+    exporter already writes verts relative to their own bone's pivot.
+    """
+    try:
+        if data[:4] != b"glTF":
+            return data
+        json_len = struct.unpack("<I", data[12:16])[0]
+        head, body = data[:20], data[20:]
+        doc = json.loads(body[:json_len].decode("utf-8"))
+        nodes = doc.get("nodes") or []
+        if not nodes:
+            return data
+
+        original = [list(n.get("translation") or [0.0, 0.0, 0.0]) for n in nodes]
+        changed = False
+
+        def walk(i, parent_world):
+            nonlocal changed
+            mine = original[i]
+            rel = [mine[k] - parent_world[k] for k in range(3)]
+            if any(abs(rel[k] - mine[k]) > 1e-9 for k in range(3)):
+                nodes[i]["translation"] = rel
+                changed = True
+            for c in nodes[i].get("children") or []:
+                walk(c, mine)
+
+        for scene in doc.get("scenes") or []:
+            for root in scene.get("nodes") or []:
+                walk(root, [0.0, 0.0, 0.0])
+        if not changed:
+            return data
+
+        new_json = json.dumps(doc, separators=(",", ":")).encode("utf-8")
+        new_json += b" " * ((4 - len(new_json) % 4) % 4)
+        rest = body[json_len:]
+        out = bytearray()
+        out += b"glTF" + struct.pack("<II", 2, 12 + 8 + len(new_json) + len(rest))
+        out += struct.pack("<II", len(new_json), 0x4E4F534A) + new_json
+        out += rest
+        return bytes(out)
+    except Exception:
+        # A fix that cannot be applied must never cost the user their export.
+        return data
+
+
+def normalize_folder(folder) -> str:
+    """One canonical spelling for a folder path.
+
+    A folder is only the slash-separated path its assets carry, so two
+    spellings of the same path - `STRATA / foundry` and `STRATA/foundry` -
+    would otherwise show up as two different folders holding half the assets
+    each. Segments are trimmed and rejoined on a bare slash.
+    """
+    segs = [seg.strip() for seg in str(folder or "").split("/")]
+    return "/".join(seg for seg in segs if seg)
+
+
+def detect_kind_from_source(dsl: str) -> str:
+    """Read the kind straight off the document's own declaration.
+
+    The grammar names its own track on the first real line - `model stalker {`
+    - so an AUTO asset never has to be told what it is; the source already
+    says. Comments and blank lines are skipped, nothing else is guessed.
+    """
+    for raw in (dsl or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith("//"):
+            continue
+        m = _KIND_DECL_RE.match(line)
+        return _DECL_TO_KIND.get(m.group(1), "") if m else ""
+    return ""
+
+
+def guess_kind_from_text(text: str) -> str:
+    """Guess a track from a brief, for an AUTO asset with no source yet."""
+    t = (text or "").lower()
+    best, score = "", 0
+    for kind, words in _KIND_HINTS.items():
+        hits = sum(1 for w in words if w in t)
+        if hits > score:
+            best, score = kind, hits
+    return best
+
+
+def resolve_kind(track: str, dsl: str = "", text: str = "") -> tuple:
+    """(kind, was_auto). A fixed track is obeyed; AUTO reads the source first."""
+    track = (track or "model").lower()
+    if track in TRACK_KINDS:
+        return track, False
+    kind = detect_kind_from_source(dsl) or guess_kind_from_text(text) or "model"
+    return kind, True
+
+
+def reuse_blocks_text(blocks: list, kind: str) -> str:
+    """The REUSABLE BLOCKS section: parts already built, ready to be reused.
+
+    Reuse is cheaper than redesign and keeps a project visually consistent, so
+    the blocks go in as source the model may copy verbatim rather than as prose
+    describing them.
+    """
+    usable = [b for b in (blocks or []) if (b.get("source") or "").strip()
+              and (not b.get("kind") or b.get("kind") == kind)]
+    if not usable:
+        return ""
+    out = ["REUSABLE BLOCKS - already built, verified, and yours to copy",
+           "  Paste a block's lines into the document when the brief calls for that part,",
+           "  then adjust its `at` position and sizes to fit. Do not redesign a part that is",
+           "  already here, and keep its proportions unless the instruction says otherwise."]
+    for b in usable[:8]:
+        name = (b.get("name") or "block").strip()
+        note = (b.get("note") or "").strip()
+        src = (b.get("source") or "").strip()
+        out.append(f"\n  BLOCK {name}" + (f" - {note}" if note else ""))
+        for line in src.splitlines():
+            out.append("    " + line)
+    return "\n".join(out)
 
 
 def build_engineered_prompt(payload):
@@ -2434,9 +4090,8 @@ def build_engineered_prompt(payload):
     the same prompt compiler as `designbridge.py prompt`, then adds the round
     context (current source, compiler report, edit/fix/new-take instruction).
     """
-    kind = (payload.get("kind") or payload.get("track") or "model").lower()
-    if kind not in ("texture", "model", "prop"):
-        kind = "prop"
+    raw_track = (payload.get("kind") or payload.get("track") or "model").lower()
+    kind = raw_track if raw_track in TRACK_KINDS else ""
 
     mode = (payload.get("mode") or "edit").lower()
     if mode not in ("edit", "new_take", "fix"):
@@ -2453,6 +4108,15 @@ def build_engineered_prompt(payload):
     want_context = payload.get("context", True) is not False
     style_lock = payload.get("styleLock", "") if payload.get("styleLockOn", True) is not False else ""
     runnable = bool(payload.get("runnable", False))
+    reuse = payload.get("blocks") or []
+
+    # AUTO: the track is read off the document that exists, and only guessed
+    # from the brief when there is no document yet. One project can therefore
+    # hold a model, a prop and a texture without the operator switching a
+    # setting before every round.
+    auto_track = not kind
+    if auto_track:
+        kind, _ = resolve_kind("auto", dsl, instruction or name)
 
     if mode == "fix":
         brief = "Repair this design: " + (instruction or "make it compile cleanly without changing its intent.")
@@ -2476,10 +4140,20 @@ def build_engineered_prompt(payload):
         "        ```\n"
         "        <the complete document, starting with its first keyword>\n"
         "        ```\n"
-        "  3. Nothing after the closing fence. Send the WHOLE source every round -\n"
+        "  3. If you had to depart from the brief - a colour substituted, a part\n"
+        "     dropped to stay inside the budget - add one line after the fence:\n"
+        "        deviations: <what you changed, and why, in one sentence each>\n"
+        "     Say nothing there if you changed nothing. This line does not count\n"
+        "     against the four-line plan.\n"
+        "  4. Nothing else after the fence. Send the WHOLE source every round -\n"
         "     never a patch, never a fragment, never a diff.\n"
         "  Do not wrap the source in angle brackets or any other marker. The fence\n"
         "  alone is the delimiter.\n"
+        "\n"
+        "  SEVERAL ASSETS IN ONE REPLY are welcome. Give each its own fenced block,\n"
+        "  one complete document per block. They are split apart and filed\n"
+        "  separately, so three fences means three assets - or three takes on one,\n"
+        "  if they share a name. Do not put two documents inside one fence.\n"
     )
     if HAS_DESIGNBRIDGE and db_core is not None:
         try:
@@ -2493,9 +4167,32 @@ def build_engineered_prompt(payload):
     where = " ".join(part for part in (name, f"({tag})" if tag else "", f"on {branch}" if branch else "") if part)
     extra = []
 
+    prec = precedence_block(instruction or "", style_lock, dsl)
+    if prec:
+        extra.append(prec)
+    if kind == "structure":
+        # designbridge knows three tracks; the structure grammar is ours, so
+        # the prompt has to carry it or the model is guessing at the syntax.
+        extra.append(STRUCTURE_GRAMMAR)
+        fb = forms_block((payload.get("style") or {}).get("forms"))
+        if fb:
+            extra.append(fb)
+        extra.append(textures_block(payload.get("textures") or []))
+    if GOTCHAS.get(kind):
+        extra.append(GOTCHAS[kind])
+
+    if auto_track:
+        src = "the current source" if detect_kind_from_source(dsl) else "the brief"
+        extra.append(
+            f"TRACK - AUTO, resolved to {kind.upper()} from {src}\n"
+            f"  This asset is not pinned to one track. The grammar above is the {kind} grammar\n"
+            f"  because that is what {src} declares. Write a {kind} document and nothing else;\n"
+            "  do not mix two grammars in one document."
+        )
+
     # Standing art direction leads the round context: it governs everything
     # that follows, including a NEW TAKE that otherwise inherits nothing.
-    lock_block = style_lock_text(style_lock, payload.get("style"))
+    lock_block = style_lock_text(style_lock, payload.get("style"), kind)
     if lock_block:
         extra.append(lock_block)
 
@@ -2529,6 +4226,10 @@ def build_engineered_prompt(payload):
 
     # The shape budget goes in as hard limits, and is re-measured after the
     # compile, so it binds rather than merely suggesting.
+    reuse_block = reuse_blocks_text(reuse, kind)
+    if reuse_block:
+        extra.append(reuse_block)
+
     bones_now = len(re.findall(r"(?m)^\s*bone\s+\S", dsl or ""))
     extra.append(style_constraints_text(kind, payload.get("style"), bones_now, brief))
     size_note = size_budget_note(kind, payload.get("style"), brief)
@@ -2671,7 +4372,7 @@ def build_engineered_prompt(payload):
                 "active": bool(lock_block),
                 "chars": len(style_lock),
                 "lines": len([l for l in style_lock.splitlines() if l.strip()]),
-                "dims": lock_dims_line(payload.get("style")),
+                "dims": lock_dims_line(payload.get("style"), kind),
                 "body": style_lock,
             },
             "lines": text.count("\n") + 1}
@@ -2811,6 +4512,19 @@ def make_handler(storage: StudioStorage, html_path: Path):
                             return self._send_bytes(raw, "image/png", 200)
                     return self._send_bytes(b"", "image/png", 404)
 
+                if path == "/api/export/bulk.zip":
+                    from urllib.parse import parse_qs as _pq
+                    q = _pq(parsed.query)
+                    ids = [x for x in (q.get("ids", [""])[0] or "").split(",") if x]
+                    fmt = (q.get("fmt", ["obj"])[0] or "obj")
+                    scope = (q.get("versions", ["head"])[0] or "head")
+                    cids = [x for x in (q.get("commits", [""])[0] or "").split(",") if x]
+                    if not ids:
+                        return self._send_json({"ok": False, "error": "No assets selected"}, 400)
+                    data, ctype, fname = storage.build_bulk_zip(ids, fmt, scope, cids)
+                    return self._send_bytes(data, ctype, 200,
+                                            {"Content-Disposition": f'attachment; filename="{fname}"'})
+
                 if path.startswith("/api/export/"):
                     parts = [unquote(x) for x in path.split("/") if x]
                     # /api/export/<project_id>/repo.zip
@@ -2867,6 +4581,48 @@ def make_handler(storage: StudioStorage, html_path: Path):
             parts = [unquote(x) for x in path.split("/") if x]
             try:
                 body = self._read_json()
+                if path == "/api/commits/label":
+                    return self._send_json(storage.set_commit_label(body))
+
+                if path == "/api/commits/promote":
+                    return self._send_json(storage.promote_commits(body))
+
+                if path == "/api/commits/delete":
+                    return self._send_json(storage.delete_commits(body))
+
+                if path == "/api/selfcheck/prompt":
+                    return self._send_json(storage.selfcheck_brief(body))
+
+                if path == "/api/folders/create":
+                    return self._send_json(storage.create_folder(body))
+
+                if path == "/api/folders/delete":
+                    return self._send_json(storage.delete_folder(body))
+
+                if path == "/api/rename/prompt":
+                    return self._send_json(storage.rename_brief(body))
+
+                if path == "/api/rename/apply":
+                    return self._send_json(storage.apply_rename(body))
+
+                if path == "/api/projects/action":
+                    return self._send_json(storage.bulk_project_action(body))
+
+                if path == "/api/intake":
+                    return self._send_json(storage.intake_documents(body))
+
+                if path == "/api/projects/bulk":
+                    return self._send_json(storage.create_projects_bulk(body))
+
+                if path == "/api/projects/track":
+                    return self._send_json(storage.set_project_track(body))
+
+                if path == "/api/blocks":
+                    return self._send_json(storage.save_block(body))
+
+                if path == "/api/blocks/delete":
+                    return self._send_json(storage.delete_block(body))
+
                 if path == "/api/projects":
                     return self._send_json(storage.create_project(body))
                 if len(parts) == 4 and parts[0] == "api" and parts[1] == "projects" and parts[3] == "duplicate":
@@ -2882,6 +4638,11 @@ def make_handler(storage: StudioStorage, html_path: Path):
                 if path == "/api/llm/run":
                     return self._send_json(storage.run_direct_llm(body.get("prompt", "")))
                 if path == "/api/prompt":
+                    # A building binds its materials to textures that exist.
+                    # The model cannot know their names unless it is told, so
+                    # the workspace's own texture assets ride along.
+                    if "textures" not in body:
+                        body["textures"] = storage.list_textures()
                     return self._send_json(build_engineered_prompt(body))
                 if path == "/api/style-parse":
                     spec, err = extract_json(body.get("text", ""))

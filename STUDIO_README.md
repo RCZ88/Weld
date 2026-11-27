@@ -548,3 +548,702 @@ strip: *"style lock written but switched off"* — so an asset that drifts has a
 visible cause too.
 
 If your AI keeps returning the same design, that strip is the answer.
+
+---
+
+## Round 9 — one project, many kinds; and a library of parts
+
+Four things were in the way of using the Studio on a real set of assets rather
+than one asset at a time. All four are now built.
+
+### The track is no longer a life sentence
+
+A project used to be welded to the track it was created on. A prop that turned
+out to need bones had to be abandoned and rebuilt as a new asset, and a folder
+could not hold a model, a prop and a texture that belong to the same creature.
+
+**SETUP → TRACK** now switches an open asset between MODEL, PROP, TEXTURE and
+**AUTO**, at any time, and the new-asset modal offers AUTO as a fourth choice.
+
+AUTO is the interesting one. The grammar names its own track on the first real
+line of the document — `model stalker {`, `texture rust size=16`,
+`design lamp units=mm` — so an AUTO asset never has to be told what it is: the
+source already says. Each round reads the declaration off the head revision and
+sends that grammar. Write a different kind of document and the next round
+follows it. Nothing to switch, and the prompt says which way it resolved:
+
+```
+TRACK - AUTO, resolved to PROP from the current source
+  This asset is not pinned to one track. The grammar above is the prop grammar
+  because that is what the current source declares. Write a prop document and
+  nothing else; do not mix two grammars in one document.
+```
+
+With no source yet — a brand-new AUTO asset — the brief decides instead, by
+keyword, and the starter document is written in that grammar. The one trap worth
+recording: `prop` documents declare themselves with **`design`**, not `prop`, so
+the first keyword of a document maps to a track rather than being one.
+
+### A reuse library, so a part is designed once
+
+**SETUP → REUSE LIBRARY.** Click a part in the viewport, click
+`SAVE "<part>"`, and its source is lifted out of the document — braces balanced,
+indentation stripped — and kept. `WHOLE` saves the entire document as one block.
+
+Saved blocks of the current track ride along with every prompt as a new section:
+
+```
+REUSABLE BLOCKS - already built, verified, and yours to copy
+  Paste a block's lines into the document when the brief calls for that part,
+  then adjust its `at` position and sizes to fit. Do not redesign a part that is
+  already here, and keep its proportions unless the instruction says otherwise.
+```
+
+This is the cheap half of composition: reuse without an import graph. Blocks of
+another track are kept but not sent, and the card says so (`3 in this prompt ·
+1 other track`), because a bone hierarchy pasted into a texture is noise. The ON
+switch stops sending them without deleting anything.
+
+### A batch is a set of siblings
+
+The `＋` button in the asset sidebar is now joined by a **batch** button. One
+line per asset; `name: description` names it, a bare line is just a brief and the
+asset adopts its name from the first document that compiles. Bullets and dashes
+are stripped, so a pasted list works as pasted. Every asset in the batch lands
+in the same folder on the same track — usually AUTO, which is what makes a mixed
+batch possible:
+
+```
+crate_small: a banded wooden crate          -> prop
+floor_grate: tileable rusted steel grate    -> texture
+sentry_drone: hovering drone with bone arms -> model
+```
+
+Capped at 40 a batch, each on its own `main` branch, each with a compiling
+starter document.
+
+### A selection exports as a set
+
+The **checklist** button turns the sidebar into a selection, with a bar that
+exports every chosen asset into one zip. `NATIVE` is the format that matters: a
+texture has no `.obj` and a model has no `.png`, so NATIVE gives every asset the
+format its own kind exports, and one click works on a folder holding all three
+tracks. Anything whose head revision does not compile is skipped and **named in
+`MANIFEST.txt`** rather than silently dropped.
+
+### An asset list that shows the assets
+
+Each card now carries the face of its asset — the thumbnail from its last good
+revision, or, for a texture, the generated PNG itself — instead of a track icon
+repeated nine times. Hovering a card opens a **live preview pane**: the real
+compiled geometry, in its own small renderer, turning slowly. A texture shows its
+PNG; a revision that does not compile says so rather than showing an empty box.
+The pane runs its own scene so the two viewports never fight over one scene
+graph, and its mesh fetches are cached per revision.
+
+| State | What the pane shows |
+|---|---|
+| Geometry present | the mesh, orbiting, with edges |
+| Texture track | the generated PNG, fitted |
+| Head does not compile | `DOES NOT COMPILE` |
+| No WebGL | `NO WEBGL` — the pane degrades, the list still works |
+| Mesh fetch failed | `PREVIEW UNAVAILABLE` |
+
+### New endpoints
+
+| Route | What it does |
+|---|---|
+| `POST /api/projects/track` | switch an asset's track, AUTO included |
+| `POST /api/projects/bulk` | create a batch from a list of descriptions |
+| `POST /api/blocks` | save a reuse block |
+| `POST /api/blocks/delete` | forget one |
+| `GET /api/export/bulk.zip?ids=&fmt=` | one zip for a selection; `fmt=native` per asset |
+
+`designbridge.py` is untouched, as always. Every one of these lives in
+`studio_server.py` and `index.html`.
+
+---
+
+## Round 10 — the selection finishes, and the answer comes back whole
+
+Two things, both about the same problem: the Studio was built for one asset at
+a time, and nobody works on one asset at a time.
+
+### INTAKE — paste the whole answer
+
+The prompt leaves in one copy. The answer comes back carrying six props, or
+three takes on one mob, and until now each document had to be pasted
+separately — the slowest part of the loop by a wide margin.
+
+The **intake** button in the asset sidebar (and `MANY` beside the response
+cassette, which carries whatever is already pasted there) takes the entire
+reply, prose and all, splits it into the documents it holds, compiles every one
+for real, and files each.
+
+Splitting is tried three ways, in order: fenced blocks first, because that is
+what the output contract asks for; then the legacy `<<<DESIGN>>>` sentinels;
+then, failing both, every top-level `model` / `design` / `texture` line starts a
+new document, so a bare run of documents still separates correctly.
+
+Routing is the interesting part:
+
+| Mode | What happens |
+|---|---|
+| `AUTO` | a document whose name matches an existing asset becomes its **next version**; anything else becomes a **new asset** |
+| `ALL VERSIONS` | every document becomes a successive version of the open asset, in the order pasted — three takes on one thing, ready to diff |
+| `ALL NEW` | every document becomes its own asset, even when the name already exists |
+
+A document names itself on its first line, and that is the only name that
+counts — which is what makes AUTO work without asking anything.
+
+The modal counts before it commits (`3 documents · 1 known asset · 2 new`) and
+the count follows the mode, so the plan is visible while it is still editable.
+Afterwards every document gets a line in a receipt: what it was, where it went,
+`v6 of guard_drone` or `new asset · v1`, and whether it compiled. **A document
+that fails is still filed, with its diagnostics** — a failed revision is
+information, not a thing to drop. Capped at 24 a paste.
+
+### The selection does the other four things
+
+A selection that could only be exported was half a feature: the reason to
+select eleven assets is usually to move, retrack or delete all eleven.
+
+`ALL` · `NONE` · **EXPORT** · **MOVE** · **TRACK** · **DELETE**
+
+MOVE reuses the folder picker, which now says `2 selected assets` instead of one
+name. TRACK is a dropdown that applies on change, AUTO included. DELETE names
+what it is about to destroy and refuses to empty the workspace:
+
+> That would delete every asset in the workspace (13). Leave at least one behind.
+
+Every asset is handled independently, so one refusal does not abandon the rest,
+and anything that failed is named in the toast rather than swallowed.
+
+### New endpoints
+
+| Route | What it does |
+|---|---|
+| `POST /api/intake` | split, compile and file many documents; returns a per-document receipt |
+| `POST /api/projects/action` | one action — `delete`, `move`, `track` — over a selection |
+
+`create_project` was split into `_insert_project` (returns the new id) and a thin
+wrapper, so an intake can create an asset and keep working with it. It now also
+accepts a `source`, which becomes v1 itself — an intake leaves no starter stub
+sitting in front of the real first revision.
+
+### Deliberately not built
+
+**Animation playback.** The timeline, scrubber and duration readout are UI only;
+nothing poses the geometry. The compiler does emit real keyframes and the `.glb`
+export carries them, so animation works *outside* the Studio. Dropped at the
+operator's request as unnecessary — recorded here so nobody mistakes the
+scrubber for a player.
+
+---
+
+## Round 11 — bulk rename, and the prompt that writes the mapping
+
+Forty assets called `untitled_model_9f2a` is what a fast intake leaves behind,
+and naming them is exactly the work a language model is good at. But a model can
+only do it if it is handed the real ids and an exact output shape — a mapping
+keyed on invented ids renames nothing. So the feature is two halves.
+
+### Half one: the prompt
+
+`RENAME` in the selection bar opens a two-step modal. Step 1 builds a prompt that
+carries the actual inventory and the JSON contract, and nothing else:
+
+```
+RENAME 3 ASSET(S)
+  An asset's name is a filename: lower snake_case, no spaces, no punctuation
+  beyond underscores. It is what every export is called, so it should read as
+  what the thing is, not as a sentence about it.
+
+THE INVENTORY - these are the real ids. Copy them exactly.
+  coffee_mug    name=coffee_mug    track=prop     folder=-   head=v1 2P / 848T
+  rusted_iron   name=rusted_iron   track=texture  folder=-   head=v1 6 layers
+  stalker_mob   name=stalker_mob   track=model    folder=-   head=v2 6B / 8BX
+```
+
+…then the naming guidance (say what the thing is; keep a family sorting
+together; don't restate the track — `drone_model` says the same thing twice),
+then the contract. An optional one-line hint rides along, so
+`foundry-era STRATA props, keep the crane family together` shapes the answer.
+`COPY PROMPT` for the clipboard, `SEE IT` to read it first.
+
+### Half two: a reader that takes what the model actually sends
+
+Models wrap JSON in prose and fences and pick their own container key, so the
+reader is deliberately tolerant. It pulls the first JSON object or array out of
+the text and accepts any of:
+
+```json
+{"assets":[{"id":"untitled_model_9f2a","name":"slag_crane"}]}
+[{"id":"wall_tile","name":"soot_concrete_tile","folder":"STRATA / foundry"}]
+{"stalker_mob":"gloom_stalker"}
+```
+
+`folder` is optional and moves the asset at the same time. The modal counts
+locally before anything is applied (`3 renames parsed`, or `no JSON in that
+text`), and **every entry stands or fails on its own**, with a per-entry
+receipt — a mapping of forty that reports one total is not something anyone can
+check:
+
+```
+✓ guard_drone        → foundry_valve_cluster
+✓ rusted_iron        → soot_wall_panel · STRATA / foundry
+✗ definitely_not_real → not in the selection
+```
+
+An id outside the current selection is refused rather than quietly applied,
+which is what makes it safe to paste a mapping that covers more than you meant.
+
+### Versions can be renamed now too
+
+The modal's second scope renames **revisions** of the open asset — the thing
+asked for several rounds ago and never built. A version's note is what you read
+in the history and the branch map, so the prompt says it must describe what
+changed, not what the asset is:
+
+```json
+{"versions":[
+  {"tag":"v3","note":"wider shoulders, gold visor"},
+  {"tag":"v4","note":"thinner legs","newTag":"v4-slim"}
+]}
+```
+
+`newTag` is optional and only worth using when a label reads better than `vN`.
+Tags stay unique inside an asset — a clash is refused by name
+(`'v1' is already used in this asset`) rather than silently shadowing an
+existing revision. `meta.json` on disk is rewritten so the tag and note on the
+filesystem follow the rename, and exports named after the tag pick up the new
+one.
+
+### New endpoints
+
+| Route | What it does |
+|---|---|
+| `POST /api/rename/prompt` | the instructing prompt, with the live inventory for the scope |
+| `POST /api/rename/apply` | parse a tolerant mapping and apply it, per-entry |
+
+`rename_commit()` is new on the storage layer: retag or re-note one revision,
+with uniqueness enforced and the on-disk metadata kept in step.
+
+---
+
+## Round 12 — revisions become first-class, and the right mouse button works
+
+The operator said something that reframed the whole tool: *making a version is
+quicker than making an asset, so I've been making new models as versions.*
+
+That is not a misuse. It is the faster habit, and the honest response is not to
+make asset creation faster — it is to give revisions every operation an asset
+already had, plus an exit for the ones that turn out to be their own thing.
+
+### Right-click, everywhere
+
+One context-menu component, two action sets so far, submenus that open in place
+with a back row (no hover timing to fight).
+
+**On an asset:** Open · New version · Rename… · Move to folder… · Duplicate ·
+Set track ▸ · Export ▸ (head / every revision / whole repo, each by format) ·
+Add to selection · Delete.
+
+**On a revision:** Check out · New version from here · Fork a branch… ·
+**Make it its own asset** · Rename… · Export ▸ · Add to selection ·
+Select every revision · Select the latest only · Delete.
+
+When several revisions are selected, the actions say so — `Make it its own
+asset (3)` — and apply to all of them. The per-card hover buttons stay for
+anyone who likes them; they were just never enough room.
+
+Two bugs worth recording, both found in the browser rather than reasoned about:
+a capture-phase `scroll` listener closed the menu the instant it opened, because
+panels scroll themselves on focus; and the click that opened the menu also
+closed it, so the close handler now ignores anything within 250 ms of opening.
+
+### Selecting revisions
+
+`ctrl`/`cmd`-click picks one. `shift`-click takes the whole run between it and
+the last one picked. A plain click still just checks the revision out — the
+thing it has always done — and clears the selection.
+
+Selected revisions get a ring and a tick, and a bar appears above the rail:
+
+`ALL` · `LATEST` · `✕` — then `PROMOTE` · `RENAME` · `EXPORT` · `DEL`
+
+`ALL` and `LATEST` are the version-selection setting asked for; anything else is
+custom by ctrl- and shift-clicking.
+
+### Promote — a version becomes its own asset
+
+`PROMOTE`, the context-menu entry, or **dragging the revision out of the rail
+and dropping it on the asset list** (a drop zone appears while dragging, and the
+asset list accepts the same drop, because that is the gesture people try first).
+
+Each promoted revision keeps its document byte for byte and becomes **v1 of a
+new asset**. The original is left alone — a promotion is a copy, not a move —
+and the new asset inherits the parent's folder and track. A revision whose
+document declares the parent's own name becomes `guard_drone_v4` rather than
+`guard_drone_7f2a`, because the latter tells nobody anything.
+
+### Renaming revisions, and exporting by version
+
+The rename modal's `VERSIONS` scope now narrows to the selection: with three
+revisions ticked, the AI is asked to name three, not forty. The modal says which
+it is working on (`3 revisions of guard_drone — the selected ones`).
+
+Export gained a version scope everywhere it appears — a dropdown beside the
+format in the selection bar, and the same three choices in both context menus:
+
+| Scope | What lands in the zip |
+|---|---|
+| `LATEST` | each asset's head revision — what goes into the game |
+| `ALL VERSIONS` | every revision, each in its own folder — a handoff or a backup |
+| `PICKED VERSIONS` | only the ticked revisions |
+
+Choosing `PICKED VERSIONS` with nothing ticked says so rather than exporting the
+wrong thing.
+
+### Deleting revisions
+
+A revision is not a leaf, so deleting one in the middle would orphan everything
+after it. Children are **re-parented onto the deleted revision's parent**, any
+branch or project head pointing at it falls back to the newest revision left on
+that branch, a branch that loses its last revision is removed, and an asset
+always keeps at least one revision. The confirmation says all of this before you
+agree to it.
+
+### New endpoints
+
+| Route | What it does |
+|---|---|
+| `POST /api/commits/promote` | each named revision becomes v1 of its own asset |
+| `POST /api/commits/delete` | delete revisions, re-parenting the history |
+| `GET /api/export/bulk.zip?…&versions=head\|all\|picked&commits=…` | the version scope |
+
+One fix worth noting: `_insert_project` makes each new asset active, so a
+promotion used to dump you in the last asset it created. Promote now restores
+the asset you were working in, and an intake in `ALL VERSIONS` mode stays on its
+target.
+
+---
+
+## Round 13 — a tree, a draggable seam, one selection bar, and labels that stay editable
+
+Five complaints, all of them about placement rather than features. Recorded in
+the operator's own terms because each one names a real design mistake.
+
+### "The split shouldn't be static"
+
+The asset list was pinned at 190px whatever the screen or the number of assets,
+which is wrong in both directions: twelve assets had to be scrolled four at a
+time, and someone working inside one asset wanted that space for its revisions.
+
+The seam between them is now a drag handle. It clamps so the revision rail keeps
+a usable minimum, double-click resets it, and where you left it is remembered
+per workspace.
+
+### "Project, then folders, then models, then versions"
+
+The sidebar grouped by one flat folder string. It is now a real tree, built from
+the slash-separated path each asset already carried — so `STRATA/ashen_basin/mobs`
+nests three deep with no schema change and existing data just works.
+
+```
+▾ STRATA                      12
+  ▾ ashen_basin                9
+    ▾ mobs                     4
+      ▸ gloom_stalker    model · 6B / 8BX
+      ▾ valkor_plating   prop  · 2P / 848T
+          ● v3  slimmer legs, amber visor      HEAD
+          ● v2  arms past knees
+          ● v1  initial blockout
+```
+
+Folders default open — nothing a person filed should vanish on them — and assets
+default closed, because their revisions are a detail you ask for. Only the
+exceptions are stored, so the state survives a reload without growing.
+
+A version row in the tree checks out on click, takes `ctrl`/`shift` for the same
+selection the rail uses, and right-clicks to the same menu. It is a second view
+of one feature, never a parallel one.
+
+Right-clicking a folder gives: select everything inside · export everything
+inside ▸ · new asset / batch / intake **here** (the modal opens pointed at that
+folder) · rename folder… · move contents to… · collapse.
+
+Renaming a folder rewrites a path prefix across every asset under it, because a
+folder is only the path its assets carry. That also means two spellings of one
+path would be two half-empty folders, so paths are now normalised on write —
+`STRATA / foundry` and `STRATA/foundry` converge.
+
+### "Most of the actions are the same for the top and the bottom"
+
+They were, and the two bars had started to drift. There is now **one selection
+bar component rendered twice**, once per section:
+
+```
+⌗ 3 OF 12 REVISIONS        ALL  LATEST  ✕
+[NATIVE▾] [SELECTED▾]  [   EXPORT   ]  [⋯]
+```
+
+Identical shape, identical code path, different target.
+
+### "You can't control the export of the versions"
+
+That was the real bug behind the complaint: the revision bar borrowed the asset
+bar's dropdowns, so exporting revisions meant changing the asset export first.
+**Each bar now owns its own format and version scope**, remembered separately.
+The version bar defaults to `SELECTED`; the asset bar to `LATEST`.
+
+### "The UI should be clean and not so crowded"
+
+Two cuts, both structural rather than cosmetic:
+
+**A third row of buttons became one `⋯`.** MOVE, TRACK, RENAME and DELETE stopped
+competing with EXPORT for attention and moved behind an overflow menu — the same
+list the right-click menu offers, so there is one place to change them.
+
+**Five unlabelled icons became one labelled control.** New asset, new batch and
+intake all answer one question — *add something* — so they live together behind
+`＋ NEW ▾`. Selection and panel-collapse stay as separate icons because they act
+on what is already there. Three controls, each with a reason.
+
+### "Intake was in the wrong place"
+
+The sharpest note of the five. Intake sat next to the response cassette, which
+said it belonged to *that reply for that version*. It does not: it creates assets
+and versions across the whole workspace. The button is gone from there and lives
+in `＋ NEW ▾` with the other ways assets arrive. It still carries whatever is
+already pasted in the cassette, so nothing is pasted twice — the capability was
+right, the placement claimed a scope it did not have.
+
+### "Where's the comment feature?"
+
+A revision's note was writable only in the moment it was created — the one moment
+you know least about it. What a revision turned out to be is usually clear later.
+
+**Double-click any note to edit it in place.** Enter saves, Escape restores.
+Also in the revision right-click menu as `Relabel…`, and in the version bar's `⋯`.
+The note field on new commits stays where it was.
+
+### New endpoints
+
+| Route | What it does |
+|---|---|
+| `POST /api/commits/label` | relabel one revision by id, at any time |
+| `POST /api/projects/action` with `action:"refolder"` | rename a folder path across its whole subtree |
+
+`normalize_folder()` is new and applied at every write, so one path has one
+spelling.
+
+---
+
+## Round 14 — find (⌘F / ctrl+F)
+
+The browser's own find searches what happens to be painted. In a tree with
+collapsed folders, and with only one asset's revisions on screen, that is almost
+nothing — so ctrl+F is taken over and searches the workspace instead.
+
+Five filters, cycled with `Tab` or clicked:
+
+| Filter | What it looks at |
+|---|---|
+| `ALL` | everything below, ranked together |
+| `MODELS` | asset names and ids |
+| `VERSIONS` | revision tags **and their labels** |
+| `FOLDERS` | folder paths, at every level |
+| `SOURCE` | inside every revision's document |
+
+The filter matters because one word means different things in different places:
+`stalker` is a model when you are looking for a model and a line of source when
+you are looking for the line that mentions it.
+
+`↑↓` moves, `⏎` opens, `esc` closes, and any text selected when you hit ctrl+F
+starts in the box. Hits are ranked by prefix match first, since the thing you
+typed the start of is almost always the thing you meant. `SOURCE` returns **one
+hit per revision, at its first matching line** — a document that says `bone` on
+forty lines is one result, not forty.
+
+Opening a hit lands you on the thing itself: a model opens, a revision opens its
+asset and checks that revision out, and a folder has every folder on the way
+down expanded so the match is actually visible. A revision hit also expands its
+asset in the tree, so the two views agree about where you are.
+
+The magnifier beside `＋ NEW` is the same search — placed next to the tree it
+searches, rather than in the top bar where it would be one more unexplained
+icon.
+
+---
+
+## Round 15 — Tier 1 of the model-review plan
+
+Two model reviews said the same thing: *I worked blind.* Round 15 is the six
+hygiene items that followed the self-check kit.
+
+### Precedence, stated once, with the substitutions pre-computed
+
+Both reviews reported the same problem independently: the brief names colours
+the lock forbids, so the model has to decide what to do and then confess. Every
+prompt now carries:
+
+```
+PRECEDENCE - which rule wins when two disagree
+  1. The STYLE LOCK beats everything. It is the project, not a suggestion.
+  2. THE BRIEF beats the examples and your own taste.
+  3. Where the brief names a colour the lock does not allow, use the nearest
+     locked colour. The substitutions are worked out for you below.
+
+  COLOUR SUBSTITUTIONS - the brief asked for these; use the right column
+    #C87A45  ->  #C79A4B   (close)
+    #32E6FF  ->  #1CE8FF   (very close)
+```
+
+Every hex in the brief and in the current source is matched against the locked
+palette and mapped to its nearest legal neighbour. The judgment call is gone.
+
+### Standing rules scoped by track
+
+`symmetry none` on a texture does not mean nothing — it reads as *do not make a
+symmetrical tile*. The locked-dimensions clause now names only the controls
+that apply to the track, the ALSO LOCKED sentence says "layer budget" on a
+texture and "form rules" on a model, and the DETAIL note is written in each
+track's own terms ("readable surface at 16x16" rather than "clear silhouette").
+
+### Several assets in one reply
+
+Intake has split multi-document pastes for two rounds; the contract still said
+"ONE fenced block". It now says the truth: one document per fence, as many
+fences as you like, three fences means three assets — or three takes on one if
+they share a name.
+
+### A `deviations:` line
+
+A model can now declare a substitution without breaking the four-line plan
+rule: one line after the fence, saying what changed and why.
+
+### Known behaviour, measured rather than guessed
+
+A per-track block of the things models kept getting wrong, every one checked
+against the compiler or measured by compiling a test document. The full write-up
+is `GRAMMAR_NOTES.md`; the headline is that **`noise`, `veins`, `bevel`,
+`outline` and `border` do not tile**, which is why textures looked muddy and
+had harsh borders, while `brick`, `checker`, `stripes`, `scatter`, `gradient`
+and `dither` do. Measured: a `noise` tile's wrap-around step is 47 against an
+interior maximum of 28; `bevel` is 281 against 144.
+
+### Three reference models
+
+`examples/reference/` — a humanoid with thigh→shin→foot so a kneel actually
+bends, a quadruped with four kneed legs and an opposed-diagonal walk, and a
+machine with a slewing turret and a luffing boom. All three pass `dbcheck` with
+zero failures and zero warnings, and the folder's README states the five rules
+they follow.
+
+### A real export bug, found and fixed without touching designbridge
+
+glTF composes a child node's transform on top of its parent's, but the exporter
+writes each bone's pivot verbatim as the node translation — so **every nested
+rig exported to `.glb` had its children displaced by the parent's pivot**. A
+two-bone test put the arm at y=22 instead of y=12.
+
+`.boxmodel.json` is absolute throughout and was always correct, so STRATA
+itself was unaffected; the damage was to the Blender and preview path.
+
+`fix_glb_child_pivots()` walks the node tree on the way out and rewrites each
+child's translation as `translation - parent_translation`. Vertex data is
+untouched, because the exporter already writes verts relative to their own
+bone's pivot. Every `.glb` the Studio hands out is now correct, and
+`designbridge.py` is still byte-identical.
+
+---
+
+## Round 16 — the STRUCTURE track
+
+A fourth track: buildings made of textured blocks. `structurebridge.py` is a
+separate compiler sitting beside designbridge and importing it for the PNG
+writer and the software renderer. `designbridge.py` is untouched.
+
+### The Core 12, as geometry rather than a table
+
+Every form is defined by its half-spaces, and the mesher derives triangles from
+that definition — so a `slope_45` is a real six-vertex wedge and a
+`slope_corner` is a real corner, not a cube standing in for one. The 24 proper
+cube rotations are generated rather than written out, and each form declares how
+many of them are meaningful (a cube has 1, a column 3, a slope 12, a corner 24).
+
+An orientation outside a form's range is an error, and cladding on a face the
+form cannot clad is an error — the two combinatorial holes the engine review
+asked us to close, closed by the same table the engine reads.
+
+### Volumes, not cells
+
+The grammar had one hard requirement: a 24×12×24 ruin is 7,000 cells and no
+model can write that. So it composes.
+
+```
+structure foundry_ruin size=(24,12,20) seed=7
+
+material wall    soot_iron_plate      color=#3A3F45
+material pillar  brushed_brass        color=#C79A4B
+
+room (0,0,0) (23,9,19) walls=wall floor=floor ceiling=none
+door  south at=(10,0) width=4 height=6
+window east at=(3,3) width=2 every=5
+
+colonnade (4,1,4) to=(20,1,4) material=pillar form=column every=4 height=8
+stairs (2,1,17) to=(8,7,17) material=wall facing=east
+
+collapse roof amount=0.55
+rubble   amount=0.35 material=slag
+damage   amount=0.5
+```
+
+Sixteen lines, 1,178 cells. `collapse`, `rubble` and `damage` are what make it
+a ruin generator rather than a block editor: all three are seeded, so the same
+document gives the same ruin every time and a new seed gives a sibling.
+
+### What it reports
+
+Status and cell count, the parse diagnostics, the checks, a histogram of forms
+used, total mass in cell-equivalents, and **a top-down ASCII plan per floor** —
+which is genuinely readable for architecture in a way it never is for a
+creature. Plus a preview PNG and the four-angle contact sheet.
+
+The standing check is provisional and says so: plain connectivity to the
+ground, not the weighted BFS the engine will run. It still catches the thing
+that matters — `collapse roof amount=0.55` left 114 cells floating, which would
+have fallen the moment the ruin spawned.
+
+### Output
+
+`<name>.structure.json` carries the form table, the materials with the texture
+each binds to, and every cell as the **engine's 64-bit packed record**:
+
+```
+bits  0..15 materialId   16..21 formId      22..26 orientation
+bits 27..42 claddingMat  43..48 claddingMask  49..50 crackStage
+```
+
+Verified: 1,178 cells, every record inside 64 bits, unpacking back to the right
+form and material.
+
+### In the Studio
+
+A fourth track card, a fifth button on the track switcher (`BUILD`), AUTO
+detection from the `structure` keyword, intake routing, the viewport mesh with
+**materials as the components** — click `wall` and every wall cell highlights —
+and the structure exports in the revision zip.
+
+### Two bugs caught while building it
+
+**`#` is both the comment character and the hex prefix.** `color=#6E7378` was
+being read as `color=` and every material came out colourless. A `#` now counts
+as a comment only at the start of a line or after whitespace.
+
+**The preview was unreadable.** STRATA's palette is soot and iron, which is
+correct in the game and black in a 250px thumbnail, and three stages of damage
+darkening took it the rest of the way. Damage now darkens by 6% a stage rather
+than 18%, and the preview applies an exposure lift that keeps materials
+distinguishable from one another — which is the only thing a preview is for.

@@ -1,1 +1,0 @@
-PASS: Seamless edge wrap verified across X/Y. Generated Albedo, Normal, Roughness, Metalness.

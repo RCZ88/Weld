@@ -2146,8 +2146,40 @@ document arrives, so a document that fails here fails there too.
         boot["deleted"] = results
         return boot
 
+    def zip_name(self, project_ids: list, fmt: str, scope: str = "head",
+                 override: str = "") -> str:
+        """A download whose name says what is inside it.
+
+        `designbridge_selection_glb.zip` told you nothing and the browser
+        turned the second one into `...(1).zip`. The name now carries where
+        the assets came from, how many, which revisions and when, so a
+        downloads folder stays legible and two exports never collide.
+        """
+        def slug(t):
+            out = "".join(ch if (ch.isalnum() or ch in "-_") else "-" for ch in str(t))
+            while "--" in out:
+                out = out.replace("--", "-")
+            return out.strip("-_")[:48]
+
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        if override:
+            return f"{slug(override)}_{stamp}.zip"
+
+        allp = self.get_bootstrap_state()["projects"]
+        rows = [allp[p] for p in project_ids if p in allp]
+        folders = {(r.get("folder") or "") for r in rows}
+        where = slug(folders.pop().replace("/", "-")) if len(folders) == 1 else ""
+
+        if len(rows) == 1:
+            what = slug(rows[0].get("name") or project_ids[0])
+        else:
+            what = f"{len(rows) or len(project_ids)}-assets"
+
+        bits = [b for b in (where, what, scope, fmt, stamp) if b]
+        return "_".join(bits) + ".zip"
+
     def build_bulk_zip(self, project_ids: list, fmt: str, scope: str = "head",
-                       commit_ids: list = None) -> tuple:
+                       commit_ids: list = None, name: str = "") -> tuple:
         """One zip holding whichever revisions of the selection were asked for.
 
         Exporting eleven assets one click at a time is not a workflow, so the
@@ -2221,7 +2253,8 @@ document arrives, so a document that fails here fails there too.
             if skipped:
                 manifest += ["", "SKIPPED"] + [f"  {s}" for s in skipped]
             zf.writestr("MANIFEST.txt", "\n".join(manifest) + "\n")
-        return buf.getvalue(), "application/zip", f"designbridge_selection_{fmt}.zip"
+        return (buf.getvalue(), "application/zip",
+                self.zip_name(project_ids, fmt, scope, name))
 
     def _remember_folder(self, folder: str) -> None:
         folder = normalize_folder(folder)
@@ -2821,7 +2854,11 @@ document arrives, so a document that fails here fails there too.
                 thumb = self.get_thumbnail_bytes(project_id, cm["id"])
                 if thumb:
                     zf.writestr(f"{cbase}/viewport.png", thumb)
-        return buf.getvalue(), "application/zip", f"{project_id}_full_repo.zip"
+        stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        safe = "".join(ch if (ch.isalnum() or ch in "-_") else "-"
+                       for ch in str(proj.get("name") or project_id))
+        return (buf.getvalue(), "application/zip",
+                f"{safe.strip('-')}_full-repo_{stamp}.zip")
 
     # ------------------------------------------------------------------
     # OPTIONAL DIRECT LLM RELAY (OpenAI-Compatible / Ollama / Gemini)
@@ -4521,7 +4558,8 @@ def make_handler(storage: StudioStorage, html_path: Path):
                     cids = [x for x in (q.get("commits", [""])[0] or "").split(",") if x]
                     if not ids:
                         return self._send_json({"ok": False, "error": "No assets selected"}, 400)
-                    data, ctype, fname = storage.build_bulk_zip(ids, fmt, scope, cids)
+                    data, ctype, fname = storage.build_bulk_zip(
+                        ids, fmt, scope, cids, (q.get("name", [""])[0] or "").strip())
                     return self._send_bytes(data, ctype, 200,
                                             {"Content-Disposition": f'attachment; filename="{fname}"'})
 

@@ -1247,3 +1247,37 @@ correct in the game and black in a 250px thumbnail, and three stages of damage
 darkening took it the rest of the way. Damage now darkens by 6% a stage rather
 than 18%, and the preview applies an exposure lift that keeps materials
 distinguishable from one another — which is the only thing a preview is for.
+
+## Round 17 — drag that actually drags, visible waits, JSON picking
+
+**Drag and drop rewritten on pointer events.** The HTML5 version was wrong in a
+way that read as right: `draggable="true"` was set, `dragstart` fired, and the
+drop target's `dragover` even called `preventDefault()` — and the `drop` event
+still never arrived. Chromium refuses a drop whose `dropEffect` disagrees with
+`effectAllowed`, and the native drag also swallows the pointer stream it rides
+on. The replacement is delegated from `document`, so it survives a re-render,
+and it works the same under a finger as under a mouse. It carries assets,
+folders and revisions, shows a ghost label of what you are holding, highlights
+only legal targets, and still refuses a folder dropped into its own descendant.
+
+**Assets take ctrl/shift-click.** Selecting assets used to require finding the
+checklist button first, so multi-drag was impossible until you knew about a mode
+you had not seen. Ctrl-click toggles, shift-click takes a range, and a plain
+click sets the anchor the range runs from — the same gesture the revision rail
+already had.
+
+**Waiting is visible.** A top bar names what is running: `BUILDING STRUCTURE…`,
+`ZIPPING 7 ASSETS…`, `PACKING REPOSITORY…`. Downloads go through `fetch` rather
+than an `<a download>` click, so there is a real finish to report — and the
+toast names the file and its size.
+
+**Downloads are named.** `designbridge_selection_glb.zip` told you nothing and
+the second one became `...(1).zip`. Now:
+`STRATA-era2-foundry_12-assets_head_glb_20261128-0032.zip`.
+
+**Pick by JSON.** Paste a list and get that set selected, or zipped and
+downloaded. Entries match an asset's name or id case-insensitively, `*` is a
+wildcard, `folder:PATH` takes a whole subtree and `track:structure` a whole
+track. COPY JSON-PICK PROMPT hands the AI the shape *and your real asset names*,
+so it cannot invent one. It sits with the set-once prompts, not beside the
+per-asset prompt.

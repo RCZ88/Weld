@@ -240,6 +240,13 @@
   }
   .animate-bus { animation: bus-activity 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
 
+  @keyframes busySweep {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(400%); }
+  }
+  #busy-sweep { animation: busySweep 1.1s cubic-bezier(.4,0,.6,1) infinite; }
+  @keyframes busySpin { to { transform: rotate(360deg); } }
+  #busy-spin { animation: busySpin 1s linear infinite; }
   @keyframes modalIn {
     from { opacity: 0; transform: translateY(8px) scale(0.985); }
     to { opacity: 1; transform: translateY(0) scale(1); }
@@ -316,6 +323,22 @@
 </style>
 </head>
 <body class="h-screen w-screen relative overflow-hidden bg-[#08090c] cad-technical-workbench font-sans antialiased">
+
+<!-- ===================================================================
+     BUSY — anything that takes real time says so. Compiling a structure
+     and zipping a selection both run for seconds; with no indicator the
+     app looked frozen and people clicked again.
+     =================================================================== -->
+<div id="busy-bar" class="hidden fixed inset-x-0 top-0 z-[300] pointer-events-none">
+  <div class="h-[3px] w-full bg-white/[0.08] overflow-hidden">
+    <div class="h-full w-1/3 rounded-full bg-emerald-400/85" id="busy-sweep"></div>
+  </div>
+  <div class="mx-auto mt-2 w-fit px-3 py-1.5 rounded-full bg-zinc-900/95 border border-white/15 shadow-xl flex items-center gap-2">
+    <span class="material-symbols-outlined text-[13px] text-emerald-300" id="busy-spin">progress_activity</span>
+    <span class="font-mono text-[9.5px] font-semibold text-zinc-100 tracking-wide" id="busy-label">WORKING…</span>
+    <span class="font-mono text-[9px] text-zinc-400" id="busy-sub"></span>
+  </div>
+</div>
 
 <!-- ======================================================================= -->
 <!-- 1. FULLSCREEN SPATIAL 3D VIEWPORT                                        -->
@@ -455,7 +478,7 @@
         <button class="w-6 h-6 rounded-full bg-white/[0.06] hover:bg-white/[0.15] border border-white/10 flex items-center justify-center text-zinc-400 hover:text-white tactile-btn" id="left-find-btn" title="Find a model, version, folder or line of source (⌘F)">
           <span class="material-symbols-outlined text-[14px]">search</span>
         </button>
-        <button class="w-6 h-6 rounded-full bg-white/[0.06] hover:bg-white/[0.15] border border-white/10 flex items-center justify-center text-zinc-400 hover:text-white tactile-btn" id="left-select-btn" title="Select assets to act on together">
+        <button class="w-6 h-6 rounded-full bg-white/[0.06] hover:bg-white/[0.15] border border-white/10 flex items-center justify-center text-zinc-400 hover:text-white tactile-btn" id="left-select-btn" title="Select assets to act on together — or just ctrl-click a card, and shift-click for a range">
           <span class="material-symbols-outlined text-[14px]">checklist</span>
         </button>
         <button class="w-6 h-6 rounded-full bg-white/[0.06] hover:bg-white/[0.15] border border-white/10 flex items-center justify-center text-zinc-400 hover:text-white tactile-btn" id="min-left-pod" title="Collapse panel ([)">
@@ -932,6 +955,28 @@
             The self-check setup goes with the files in <span class="text-zinc-300">selfcheck/</span> —
             upload those to the AI first. Skip it for a model with no sandbox.
           </p>
+        </div>
+
+        <!-- PICK BY JSON — selection and export driven by a pasted list -->
+        <div class="p-3.5 glass-card-item rounded-2xl flex flex-col gap-2.5">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="material-symbols-outlined text-[14px] text-zinc-300">data_object</span>
+            <span class="font-mono text-[10px] font-semibold text-white uppercase tracking-wide">PICK BY JSON</span>
+            <span class="font-mono text-[8px] text-zinc-500 truncate">select or download a set</span>
+          </div>
+          <p class="font-mono text-[8.5px] text-zinc-400 leading-snug">
+            Paste a list of names and get that exact set selected — or zipped and
+            downloaded in one go. Useful when the AI has just told you which assets
+            belong together and ticking them by hand is the slow part.
+          </p>
+          <button class="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-full bg-white/[0.07] hover:bg-white/[0.16] border border-white/[0.08] font-mono text-[9px] font-semibold text-zinc-200 hover:text-white tactile-btn" id="copy-jsonpick-btn" title="Teaches the AI the JSON shape, and lists the names it can pick from">
+            <span class="material-symbols-outlined text-[12px]">content_copy</span>
+            <span>COPY JSON-PICK PROMPT</span>
+          </button>
+          <button class="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-full bg-white/[0.07] hover:bg-white/[0.16] border border-white/[0.08] font-mono text-[9px] font-semibold text-zinc-200 hover:text-white tactile-btn" id="open-jsonpick-btn">
+            <span class="material-symbols-outlined text-[12px]">playlist_add_check</span>
+            <span>PASTE JSON &amp; PICK</span>
+          </button>
         </div>
 
         <!-- TRACK — switchable per asset, AUTO included -->
@@ -1652,6 +1697,43 @@
 </div>
 
 <!-- Context menu — one component, different action sets per target -->
+<!-- JSON PICK -->
+<div class="fixed inset-0 z-[120] hidden items-center justify-center bg-black/70 backdrop-blur-sm" id="jsonpick-modal">
+  <div class="w-[640px] max-w-[94vw] max-h-[88vh] flex flex-col rounded-3xl bg-[#0d0f14] border border-white/[0.1] shadow-2xl overflow-hidden" style="animation:modalIn .16s ease-out">
+    <div class="px-5 pt-4 pb-3 border-b border-white/[0.08] flex items-center gap-2">
+      <span class="material-symbols-outlined text-[16px] text-zinc-300">data_object</span>
+      <span class="font-mono text-[11px] font-bold text-white">PICK BY JSON</span>
+      <button class="ml-auto p-1 rounded-lg hover:bg-white/10 tactile-btn" id="jsonpick-close">
+        <span class="material-symbols-outlined text-[16px] text-zinc-400">close</span>
+      </button>
+    </div>
+    <div class="flex-1 overflow-y-auto px-5 py-4 space-y-3 min-h-0">
+      <p class="font-mono text-[8.5px] text-zinc-400 leading-snug">
+        Names match the asset name or its id, case-insensitively.
+        <span class="text-zinc-300">*</span> is a wildcard,
+        <span class="text-zinc-300">folder:PATH</span> takes a whole folder (sub-folders included) and
+        <span class="text-zinc-300">track:model|prop|texture|structure</span> takes a whole track.
+      </p>
+      <textarea id="jsonpick-input" spellcheck="false" rows="10"
+        class="w-full px-3 py-2.5 rounded-xl bg-black/50 border border-white/[0.1] font-mono text-[10px] text-zinc-100 resize-y focus:outline-none focus:border-white/30"
+        placeholder='{&#10;  "action": "download",&#10;  "format": "glb",&#10;  "versions": "head",&#10;  "name": "foundry_mobs",&#10;  "select": ["stalker_mob", "Gloom Stalker", "coffee*", "folder:STRATA/era2"]&#10;}'></textarea>
+      <div id="jsonpick-report" class="hidden rounded-xl border border-white/[0.09] bg-black/40 p-3 font-mono text-[9px] leading-relaxed"></div>
+    </div>
+    <div class="px-5 py-3 border-t border-white/[0.08] flex items-center gap-2">
+      <button class="px-3 py-1.5 rounded-full bg-white/[0.07] hover:bg-white/[0.16] border border-white/[0.08] font-mono text-[9px] font-semibold text-zinc-200 tactile-btn" id="jsonpick-check">
+        CHECK MATCHES
+      </button>
+      <div class="flex-1"></div>
+      <button class="px-3 py-1.5 rounded-full bg-white/[0.07] hover:bg-white/[0.16] border border-white/[0.08] font-mono text-[9px] font-semibold text-zinc-200 tactile-btn" id="jsonpick-select">
+        SELECT ONLY
+      </button>
+      <button class="px-3.5 py-1.5 rounded-full bg-emerald-400/90 hover:bg-emerald-300 font-mono text-[9px] font-bold text-black tactile-btn" id="jsonpick-go">
+        SELECT &amp; DOWNLOAD
+      </button>
+    </div>
+  </div>
+</div>
+
 <div class="fixed z-[70] hidden" id="ctx-menu" style="min-width:208px">
   <div class="glass-pod-panel rounded-[14px] overflow-hidden border border-white/[0.14] shadow-2xl py-1" id="ctx-menu-body"></div>
 </div>
@@ -2160,6 +2242,57 @@
   function escapeHtml(s) {
     return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
+  /* ------------------------------------------------------------------
+   * BUSY + DOWNLOADS
+   * A download used to be an <a download> click, which tells you nothing:
+   * the browser goes quiet while the server zips, and a big structure
+   * looked like a dead button. Fetching it as a blob gives a real start
+   * and a real finish to show, and lets the server name the file.
+   * ------------------------------------------------------------------ */
+  let busyDepth = 0;
+  function busyOn(label, sub = '') {
+    busyDepth++;
+    const bar = document.getElementById('busy-bar');
+    if (!bar) return;
+    document.getElementById('busy-label').textContent = label || 'WORKING…';
+    document.getElementById('busy-sub').textContent = sub;
+    bar.classList.remove('hidden');
+  }
+  function busyOff() {
+    busyDepth = Math.max(0, busyDepth - 1);
+    const bar = document.getElementById('busy-bar');
+    if (bar && !busyDepth) bar.classList.add('hidden');
+  }
+  async function withBusy(label, fn, sub = '') {
+    busyOn(label, sub);
+    try { return await fn(); } finally { busyOff(); }
+  }
+
+  /** Download through fetch so the wait is visible and the server's
+   *  Content-Disposition name is the name on disk. */
+  async function downloadFrom(url, label, sub = '') {
+    return withBusy(label, async () => {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const cd = r.headers.get('Content-Disposition') || '';
+      const m = /filename\*?=(?:UTF-8\'\')?"?([^";]+)"?/i.exec(cd);
+      const blob = await r.blob();
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = m ? decodeURIComponent(m[1]) : 'designbridge_export.zip';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 8000);
+      return { name: a.download, bytes: blob.size };
+    }, sub);
+  }
+
+  function prettyBytes(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
+
   function toast(title, detail = '', tone = 'neutral') {
     const stack = document.getElementById('toast-stack');
     const tones = {
@@ -4064,7 +4197,7 @@
         : `<span class="material-symbols-outlined text-[15px]">${escapeHtml(item.icon || 'view_in_ar')}</span>`;
       const trackLabel = item.track === 'auto' ? `auto · ${eff}` : item.track;
       return `
-        <div class="proj-card group flex items-center justify-between gap-1 p-2.5 rounded-xl glass-card-item ${active ? 'glass-card-active' : ''} cursor-pointer tactile-btn" data-proj="${escapeHtml(item.id)}" draggable="true" style="margin-left:${(depth || 0) * 10}px">
+        <div class="proj-card group flex items-center justify-between gap-1 p-2.5 rounded-xl glass-card-item ${active ? 'glass-card-active' : ''} cursor-pointer tactile-btn" data-proj="${escapeHtml(item.id)}" style="margin-left:${(depth || 0) * 10}px">
           <div class="flex items-center gap-2.5 min-w-0">
             <button class="tree-caret w-3.5 h-3.5 rounded flex items-center justify-center text-zinc-500 hover:text-white shrink-0" data-node="asset:${escapeHtml(item.id)}" title="${open ? 'Hide' : 'Show'} ${item.commits.length} revision${item.commits.length === 1 ? '' : 's'}">
               <span class="material-symbols-outlined text-[13px]">${open ? 'expand_more' : 'chevron_right'}</span>
@@ -4118,7 +4251,7 @@
       const open = treeOpen(node.path);
       const n = countUnder(node);
       return `
-        <div class="tree-folder group flex items-center gap-1.5 px-1 py-1 rounded-lg hover:bg-white/[0.05] cursor-pointer" data-path="${escapeHtml(node.path)}" draggable="true" style="margin-left:${depth * 10}px">
+        <div class="tree-folder group flex items-center gap-1.5 px-1 py-1 rounded-lg hover:bg-white/[0.05] cursor-pointer" data-path="${escapeHtml(node.path)}" style="margin-left:${depth * 10}px">
           <button class="tree-caret w-3.5 h-3.5 rounded flex items-center justify-center text-zinc-500 hover:text-white shrink-0" data-node="${escapeHtml(node.path)}">
             <span class="material-symbols-outlined text-[13px]">${open ? 'expand_more' : 'chevron_right'}</span>
           </button>
@@ -4166,7 +4299,6 @@
     renderFormsCard();
     renderReuse();
 
-    wireTreeDnD(slot);
     slot.querySelectorAll('.tree-caret').forEach(c => c.addEventListener('click', e => {
       e.stopPropagation();
       treeToggle(c.dataset.node);
@@ -4226,7 +4358,26 @@
       });
       el.addEventListener('click', e => {
         if (e.target.closest('.proj-act-btn') || e.target.closest('.sel-box') || e.target.closest('.tree-caret')) return;
+        // The same modifiers the revision rail takes. Selecting assets used to
+        // require finding the checklist button first, so dragging several at
+        // once was impossible until you knew about a mode you had not seen.
+        if (e.metaKey || e.ctrlKey) {
+          e.preventDefault();
+          if (!state.selectMode) { state.selectMode = true; document.getElementById('left-select-btn').classList.add('bg-white/20'); }
+          toggleAssetSel(el.dataset.proj, 'toggle');
+          return;
+        }
+        if (e.shiftKey) {
+          e.preventDefault();
+          if (!state.selectMode) { state.selectMode = true; document.getElementById('left-select-btn').classList.add('bg-white/20'); }
+          toggleAssetSel(el.dataset.proj, 'range');
+          return;
+        }
         if (state.selectMode) { toggleSel(el.dataset.proj); return; }
+        // Clicking an asset is what a later shift-click ranges from. Without
+        // this, "click one, shift-click another" had no anchor and selected
+        // only the second card.
+        assetAnchor = el.dataset.proj;
         hoverHide();
         state.activeProjectId = el.dataset.proj;
         state.branchFilter = 'ALL';
@@ -4276,7 +4427,7 @@
       const col = (p.branches[cm.branch] && p.branches[cm.branch].color) || '#d4d4d8';
       const ok = cm.status === 'PASS';
       return `
-        <div class="commit-card p-3 rounded-2xl glass-card-item ${isHead ? 'glass-card-active' : ''} ${picked ? 'ring-1 ring-white/50 bg-white/[0.08]' : ''} cursor-pointer tactile-btn relative overflow-hidden pl-5" data-cid="${escapeHtml(cm.id)}" draggable="true">
+        <div class="commit-card p-3 rounded-2xl glass-card-item ${isHead ? 'glass-card-active' : ''} ${picked ? 'ring-1 ring-white/50 bg-white/[0.08]' : ''} cursor-pointer tactile-btn relative overflow-hidden pl-5" data-cid="${escapeHtml(cm.id)}">
           <div class="absolute left-2.5 top-0 bottom-0 w-[2px] opacity-30" style="background:${escapeHtml(col)}"></div>
           <div class="absolute left-[6.5px] top-4 w-2.5 h-2.5 rounded-full border-2 border-[#12141a]" style="background:${escapeHtml(col)}"></div>
           <div class="flex items-center justify-between mb-1.5 gap-1">
@@ -4322,21 +4473,6 @@
         e.preventDefault();
         openCtxMenu(e.clientX, e.clientY, versionMenuItems(card.dataset.cid),
           (p.commits.find(c => c.id === card.dataset.cid) || {}).tag || 'revision');
-      });
-      card.addEventListener('dragstart', e => {
-        const sel = state.verSelection || [];
-        const ids = sel.includes(card.dataset.cid) ? sel.slice() : [card.dataset.cid];
-        e.dataTransfer.setData('text/plain', JSON.stringify({ kind: 'versions', projectId: p.id, ids }));
-        e.dataTransfer.effectAllowed = 'copy';
-        card.classList.add('opacity-50');
-        document.getElementById('ver-drop-label').textContent = ids.length > 1
-          ? `DROP TO MAKE ${ids.length} REVISIONS THEIR OWN ASSETS`
-          : 'DROP TO MAKE IT ITS OWN ASSET';
-        drop.classList.remove('hidden'); drop.classList.add('flex');
-      });
-      card.addEventListener('dragend', () => {
-        card.classList.remove('opacity-50');
-        drop.classList.add('hidden'); drop.classList.remove('flex');
       });
     });
     rail.querySelectorAll('.fork-inline-btn').forEach(btn => {
@@ -4707,6 +4843,9 @@
 
     const btn = document.getElementById('compile-btn');
     btn.disabled = true;
+    const heavy = resolvedTrack(p) === 'structure';
+    busyOn(heavy ? 'BUILDING STRUCTURE…' : 'COMPILING…',
+           heavy ? 'blocks, meshing and preview' : p.name);
     try {
       const boot = await apiCall('/api/compile', {
         method: 'POST',
@@ -4739,6 +4878,7 @@
     } catch (err) {
       toast('COMPILE ERROR', err.message, 'err');
     } finally {
+      busyOff();
       btn.disabled = false;
     }
   }
@@ -4989,11 +5129,11 @@
     const url = fmt === 'repo'
       ? `${API.BASE}/api/export/${encodeURIComponent(p.id)}/repo.zip`
       : `${API.BASE}/api/export/${encodeURIComponent(p.id)}/${encodeURIComponent(c.id)}/${encodeURIComponent(fmt)}`;
-    const a = document.createElement('a');
-    a.href = url; a.download = '';
-    document.body.appendChild(a); a.click(); a.remove();
-    toast(fmt === 'repo' ? 'DOWNLOADING REPOSITORY' : `EXPORTING ${fmt.toUpperCase()}`,
-      fmt === 'repo' ? `${p.name} — every revision` : `${p.name}@${c.tag}`, 'ok');
+    downloadFrom(url,
+      fmt === 'repo' ? 'PACKING REPOSITORY…' : `EXPORTING ${fmt.toUpperCase()}…`,
+      fmt === 'repo' ? `${p.name} — every revision` : `${p.name}@${c.tag}`)
+      .then(res => toast('DOWNLOADED', `${res.name} · ${prettyBytes(res.bytes)}`, 'ok'))
+      .catch(err => toast('EXPORT FAILED', err.message, 'err'));
   }
   document.querySelectorAll('.export-btn').forEach(b => b.addEventListener('click', () => triggerExport(b.dataset.format)));
 
@@ -5698,7 +5838,33 @@
     document.getElementById('left-select-btn').classList.toggle('bg-white/20', on);
     renderAll();
   }
+  /** Visible asset ids, in the order the tree painted them - which is what a
+   *  shift-range has to follow to mean anything. */
+  function visibleAssets() {
+    return [...document.querySelectorAll('#project-list-slot .proj-card')].map(c => c.dataset.proj);
+  }
+  let assetAnchor = null;
+
+  function toggleAssetSel(pid, mode) {
+    const vis = visibleAssets();
+    const sel = state.selection;
+    const anchor = (assetAnchor && vis.includes(assetAnchor))
+      ? assetAnchor
+      : ((getActiveProject() || {}).id);
+    if (mode === 'range' && anchor && vis.includes(anchor)) {
+      const a = vis.indexOf(anchor), b = vis.indexOf(pid);
+      vis.slice(Math.min(a, b), Math.max(a, b) + 1)
+        .forEach(id => { if (!sel.includes(id)) sel.push(id); });
+    } else {
+      const i = sel.indexOf(pid);
+      if (i < 0) sel.push(pid); else sel.splice(i, 1);
+      assetAnchor = pid;
+    }
+    renderAll();
+  }
+
   function toggleSel(pid) {
+    assetAnchor = pid;
     const i = state.selection.indexOf(pid);
     if (i < 0) state.selection.push(pid); else state.selection.splice(i, 1);
     renderSelectBar();
@@ -5707,6 +5873,13 @@
   /** One action over the whole selection. Each asset is handled on its own,
    *  so one refusal does not abandon the rest. */
   async function selectionAction(action, extra, title) {
+    busyOn((title || action).toString().toUpperCase() + '…',
+           `${(state.selection || []).length} selected`);
+    try { return await selectionActionInner(action, extra, title); }
+    finally { busyOff(); }
+  }
+
+  async function selectionActionInner(action, extra, title) {
     const ids = state.selection.slice();
     if (!ids.length || !requireServer()) return;
     try {
@@ -6674,16 +6847,18 @@
   }
 
   /** Shared by every export path, so the version scope means one thing. */
-  function exportAssets(ids, fmt, scope, commitIds) {
+  function exportAssets(ids, fmt, scope, commitIds, zipName) {
     if (!ids.length || !requireServer()) return;
     const q = new URLSearchParams({ ids: ids.join(','), fmt, versions: scope || 'head' });
     if (commitIds && commitIds.length) q.set('commits', commitIds.join(','));
-    const a = document.createElement('a');
-    a.href = `${API.BASE}/api/export/bulk.zip?${q}`;
-    a.download = '';
-    document.body.appendChild(a); a.click(); a.remove();
-    const what = scope === 'all' ? 'every revision' : scope === 'picked' ? `${(commitIds || []).length} revision(s)` : 'head revision';
-    toast('EXPORTING', `${ids.length} asset${ids.length === 1 ? '' : 's'} · ${what} · ${fmt.toUpperCase()}`, 'ok');
+    if (zipName) q.set('name', zipName);
+    const what = scope === 'all' ? 'every revision'
+      : scope === 'picked' ? `${(commitIds || []).length} revision(s)` : 'head revision';
+    downloadFrom(`${API.BASE}/api/export/bulk.zip?${q}`,
+      `ZIPPING ${ids.length} ASSET${ids.length === 1 ? '' : 'S'}…`,
+      `${what} · ${fmt.toUpperCase()}`)
+      .then(res => toast('DOWNLOADED', `${res.name} · ${prettyBytes(res.bytes)}`, 'ok'))
+      .catch(err => toast('EXPORT FAILED', err.message, 'err'));
   }
 
   /* =====================================================================
@@ -6798,36 +6973,6 @@
   /* A revision dragged out of the rail becomes its own asset. The drop zone
    * appears only while dragging, and the asset list accepts the same drop,
    * because "drag it over to the models" is the gesture people try first. */
-  (function wireVersionDrop() {
-    const drop = document.getElementById('ver-drop');
-    const list = document.getElementById('project-list-slot');
-    const read = e => {
-      try { return JSON.parse(e.dataTransfer.getData('text/plain') || '{}'); }
-      catch { return {}; }
-    };
-    const accept = e => {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'copy';
-    };
-    [drop, list].forEach(el => {
-      if (!el) return;
-      el.addEventListener('dragover', accept);
-      el.addEventListener('dragenter', e => {
-        accept(e);
-        el.classList.add('ring-1', 'ring-white/50');
-      });
-      el.addEventListener('dragleave', () => el.classList.remove('ring-1', 'ring-white/50'));
-      el.addEventListener('drop', async e => {
-        e.preventDefault();
-        el.classList.remove('ring-1', 'ring-white/50');
-        drop.classList.add('hidden'); drop.classList.remove('flex');
-        const d = read(e);
-        if (d.kind !== 'versions' || !Array.isArray(d.ids) || !d.ids.length) return;
-        if (d.projectId && d.projectId !== (getActiveProject() || {}).id) return;
-        await promoteVersions(d.ids);
-      });
-    });
-  })();
 
 
   /* =====================================================================
@@ -7424,14 +7569,6 @@
    * ===================================================================== */
   let dragPayload = null;
 
-  function dragRead(e) {
-    try {
-      const raw = e.dataTransfer.getData('text/plain');
-      if (raw) return JSON.parse(raw);
-    } catch { /* fall through to the in-page copy */ }
-    return dragPayload;
-  }
-
   /** Dropping a folder inside itself would orphan the whole subtree. */
   function dropAllowed(d, destPath) {
     if (!d) return false;
@@ -7483,66 +7620,357 @@
   const DROP_ON = 'ring-1 ring-white/60 bg-white/[0.1]';
 
   /** Wire every row the tree just painted. Called from renderAll. */
-  function wireTreeDnD(slot) {
-    const mark = (el, on) => DROP_ON.split(' ').forEach(c => el.classList.toggle(c, on));
+  /* ---------------------------------------------------------------
+   * POINTER DRAG
+   * This was HTML5 drag-and-drop. The markup was right, dragstart fired
+   * and dragover called preventDefault - and the drop event still never
+   * arrived, because Chromium refuses a drop whose dropEffect and
+   * effectAllowed disagree, and the native drag also swallows the pointer
+   * stream it rides on. Pointer events have none of those rules, survive
+   * a re-render because they are delegated from the document, and behave
+   * the same under a finger as under a mouse.
+   * --------------------------------------------------------------- */
+  const DRAG_SLOP = 6;          // px before a click becomes a drag
+  let pdrag = null;
+  let clickDeadUntil = 0;
+  const onCls = (el, on) => DROP_ON.split(' ').forEach(c => el.classList.toggle(c, on));
 
-    slot.querySelectorAll('.proj-card').forEach(card => {
-      card.addEventListener('dragstart', e => {
-        const pid = card.dataset.proj;
-        const sel = state.selection || [];
-        const ids = sel.includes(pid) ? sel.slice() : [pid];
-        dragPayload = { kind: 'assets', ids };
-        e.dataTransfer.setData('text/plain', JSON.stringify(dragPayload));
-        e.dataTransfer.effectAllowed = 'move';
-        card.classList.add('opacity-40');
-        hoverHide();
-      });
-      card.addEventListener('dragend', () => { card.classList.remove('opacity-40'); dragPayload = null; });
-    });
+  function dragSourceAt(t) {
+    const card = t.closest('.proj-card');
+    if (card) {
+      const pid = card.dataset.proj;
+      const sel = state.selection || [];
+      return { kind: 'assets', ids: sel.includes(pid) ? sel.slice() : [pid], el: card };
+    }
+    const row = t.closest('.tree-folder');
+    if (row && row.dataset.path) return { kind: 'folder', path: row.dataset.path, el: row };
+    const cm = t.closest('.commit-card');
+    if (cm) {
+      const p = getActiveProject(); if (!p) return null;
+      const sel = state.verSelection || [];
+      return { kind: 'versions', projectId: p.id,
+               ids: sel.includes(cm.dataset.cid) ? sel.slice() : [cm.dataset.cid], el: cm };
+    }
+    return null;
+  }
 
-    slot.querySelectorAll('.tree-folder').forEach(row => {
-      row.addEventListener('dragstart', e => {
-        dragPayload = { kind: 'folder', path: row.dataset.path };
-        e.dataTransfer.setData('text/plain', JSON.stringify(dragPayload));
-        e.dataTransfer.effectAllowed = 'move';
-        row.classList.add('opacity-40');
-      });
-      row.addEventListener('dragend', () => { row.classList.remove('opacity-40'); dragPayload = null; });
+  /** What sits under the cursor. The ghost is pointer-transparent so it
+   *  never hit-tests as its own drop target. */
+  function dropTargetAt(x, y) {
+    const el = document.elementFromPoint(x, y);
+    if (!el || !el.closest) return null;
+    if (el.closest('#ver-drop')) return { type: 'versions', el: document.getElementById('ver-drop') };
+    const row = el.closest('.tree-folder');
+    if (row) return { type: 'folder', path: row.dataset.path, el: row };
+    if (el.closest('#unfiled-drop')) return { type: 'folder', path: '', el: document.getElementById('unfiled-drop') };
+    if (el.closest('#project-list-slot')) return { type: 'listdrop', el: document.getElementById('project-list-slot') };
+    return null;
+  }
 
-      row.addEventListener('dragover', e => {
-        const d = dragRead(e);
-        if (!dropAllowed(d, row.dataset.path)) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        mark(row, true);
-      });
-      row.addEventListener('dragleave', () => mark(row, false));
-      row.addEventListener('drop', async e => {
-        e.preventDefault();
-        e.stopPropagation();
-        mark(row, false);
-        await dropOnto(dragRead(e), row.dataset.path);
-      });
-    });
+  function ghostStart(e) {
+    const g = document.createElement('div');
+    g.id = 'drag-ghost';
+    g.className = 'fixed z-[200] pointer-events-none px-2.5 py-1.5 rounded-lg '
+      + 'bg-zinc-900/95 border border-white/25 shadow-xl font-mono text-[9.5px] '
+      + 'font-semibold text-zinc-100 whitespace-nowrap';
+    g.textContent = pdrag.kind === 'versions'
+      ? (pdrag.ids.length > 1 ? pdrag.ids.length + ' REVISIONS' : 'REVISION')
+      : dragLabel(dragPayload).toUpperCase();
+    document.body.appendChild(g);
+    pdrag.ghost = g;
+    pdrag.el.classList.add('opacity-40');
+    if (pdrag.kind === 'versions') {
+      const d = document.getElementById('ver-drop');
+      document.getElementById('ver-drop-label').textContent = pdrag.ids.length > 1
+        ? 'DROP TO MAKE ' + pdrag.ids.length + ' REVISIONS THEIR OWN ASSETS'
+        : 'DROP TO MAKE IT ITS OWN ASSET';
+      d.classList.remove('hidden'); d.classList.add('flex');
+    }
+    ghostMove(e);
+  }
 
-    // The empty space below the tree is "unfiled": a way back out.
-    const root = document.getElementById('unfiled-drop');
-    if (root) {
-      root.addEventListener('dragover', e => {
-        const d = dragRead(e);
-        if (!dropAllowed(d, '')) return;
-        e.preventDefault();
-        root.classList.remove('opacity-0');
-        root.textContent = `DROP TO UNFILE ${dragLabel(d).toUpperCase()}`;
-      });
-      root.addEventListener('dragleave', () => root.classList.add('opacity-0'));
-      root.addEventListener('drop', async e => {
-        e.preventDefault();
-        root.classList.add('opacity-0');
-        await dropOnto(dragRead(e), '');
-      });
+  function ghostMove(e) {
+    if (pdrag && pdrag.ghost) {
+      pdrag.ghost.style.left = (e.clientX + 12) + 'px';
+      pdrag.ghost.style.top = (e.clientY + 10) + 'px';
     }
   }
+
+  function ghostEnd() {
+    document.querySelectorAll('.tree-folder').forEach(r => onCls(r, false));
+    const u = document.getElementById('unfiled-drop');
+    if (u) { u.classList.add('opacity-0'); u.textContent = 'DROP TO UNFILE'; }
+    const d = document.getElementById('ver-drop');
+    if (d) { d.classList.add('hidden'); d.classList.remove('flex'); }
+    const list = document.getElementById('project-list-slot');
+    if (list) list.classList.remove('ring-1', 'ring-white/50');
+    const g = document.getElementById('drag-ghost');
+    if (g) g.remove();
+    if (pdrag && pdrag.el) pdrag.el.classList.remove('opacity-40', 'opacity-50');
+  }
+
+  function ghostHighlight(e) {
+    const hit = dropTargetAt(e.clientX, e.clientY);
+    document.querySelectorAll('.tree-folder').forEach(r => onCls(r, false));
+    const u = document.getElementById('unfiled-drop');
+    const list = document.getElementById('project-list-slot');
+    if (u) u.classList.add('opacity-0');
+    if (list) list.classList.remove('ring-1', 'ring-white/50');
+    let ok = false;
+    if (hit && pdrag.kind === 'versions') {
+      ok = true;
+      if (list) list.classList.add('ring-1', 'ring-white/50');
+    } else if (hit && hit.type === 'folder' && dropAllowed(dragPayload, hit.path)) {
+      ok = true;
+      if (hit.path) onCls(hit.el, true);
+      else if (u) { u.classList.remove('opacity-0'); u.textContent = 'DROP TO UNFILE ' + dragLabel(dragPayload).toUpperCase(); }
+    }
+    if (pdrag.ghost) pdrag.ghost.classList.toggle('border-emerald-400/70', ok);
+  }
+
+  document.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || !e.target.closest) return;
+    // Anything you can press is not a drag handle.
+    if (e.target.closest('.proj-act-btn, .sel-box, .tree-caret, button, input, textarea, select, a, .fork-inline-btn')) return;
+    const src = dragSourceAt(e.target);
+    if (!src) return;
+    pdrag = Object.assign({ startX: e.clientX, startY: e.clientY, moved: false, ghost: null }, src);
+  });
+
+  document.addEventListener('pointermove', e => {
+    if (!pdrag) return;
+    if (!pdrag.moved) {
+      if (Math.hypot(e.clientX - pdrag.startX, e.clientY - pdrag.startY) < DRAG_SLOP) return;
+      pdrag.moved = true;
+      dragPayload = pdrag.kind === 'folder'
+        ? { kind: 'folder', path: pdrag.path }
+        : { kind: pdrag.kind, ids: pdrag.ids.slice(), projectId: pdrag.projectId };
+      hoverHide();
+      ghostStart(e);
+    }
+    ghostMove(e);
+    ghostHighlight(e);
+    e.preventDefault();
+  });
+
+  document.addEventListener('pointerup', async e => {
+    if (!pdrag) return;
+    const d = pdrag, payload = dragPayload;
+    const hit = d.moved ? dropTargetAt(e.clientX, e.clientY) : null;
+    ghostEnd();
+    pdrag = null; dragPayload = null;
+    if (!d.moved) return;
+    clickDeadUntil = Date.now() + 350;   // a drag must not also open the asset
+    if (!hit || !payload) return;
+    if (payload.kind === 'versions') {
+      if (payload.projectId && payload.projectId !== (getActiveProject() || {}).id) return;
+      await promoteVersions(payload.ids);
+      return;
+    }
+    if (hit.type === 'folder') await dropOnto(payload, hit.path);
+  });
+
+  document.addEventListener('pointercancel', () => { ghostEnd(); pdrag = null; dragPayload = null; });
+
+  // The click that follows a real drag has to be swallowed before it reaches
+  // the card, or every drop would also open what you just dragged.
+  document.addEventListener('click', e => {
+    if (Date.now() < clickDeadUntil) { e.stopPropagation(); e.preventDefault(); }
+  }, true);
+
+  /* =====================================================================
+   * PICK BY JSON
+   * The AI usually knows which assets belong together before you do - it
+   * just named them. Retyping that as fourteen ticked boxes is the slow
+   * part, so a pasted list becomes the selection, and optionally the zip.
+   * ===================================================================== */
+  const JSONPICK_FORMATS = ['glb', 'obj', 'json', 'png', 'repo'];
+
+  function jsonPickPrompt() {
+    const rows = Object.values(state.projects || {});
+    const names = rows.slice(0, 60).map(p => {
+      const where = p.folder ? p.folder + '/' : '';
+      return `  - ${p.name}   (id: ${p.id})   ${where || '(unfiled)'}  [${resolvedTrack(p)}]`;
+    }).join('\n');
+    return [
+      'When I ask you which assets to export, answer with ONE json code block',
+      'in exactly this shape and nothing else:',
+      '',
+      '{',
+      '  "action": "download",',
+      '  "format": "glb",',
+      '  "versions": "head",',
+      '  "name": "foundry_mobs",',
+      '  "select": ["stalker_mob", "Gloom Stalker", "coffee*", "folder:STRATA/era2"]',
+      '}',
+      '',
+      'Field rules:',
+      '  action    "download" to zip them, or "select" to only tick them in the app.',
+      '  format    one of ' + JSONPICK_FORMATS.join(', ') + '. "repo" means every file.',
+      '  versions  "head" for the current revision of each, or "all" for full history.',
+      '  name      optional; becomes the zip filename. Letters, digits, - and _ only.',
+      '  select    the assets. Each entry is matched against the asset name AND its',
+      '            id, case-insensitively. "*" is a wildcard. "folder:PATH" takes a',
+      '            whole folder including its sub-folders. "track:model" (or prop,',
+      '            texture, structure) takes a whole track.',
+      '',
+      'Do not invent names. Pick only from this list:',
+      names || '  (no assets yet)',
+      rows.length > 60 ? `  ... and ${rows.length - 60} more` : '',
+      '',
+      'If none of them fit what I asked for, say so in plain words instead of',
+      'guessing, and return no json.',
+    ].filter(x => x !== '').join('\n');
+  }
+
+  /** One entry of "select" -> the asset ids it matches. */
+  function jsonPickMatch(term, rows) {
+    const t = String(term || '').trim();
+    if (!t) return [];
+    const low = t.toLowerCase();
+    if (low.startsWith('folder:')) {
+      const want = normFolderTerm(t.slice(7));
+      return rows.filter(p => {
+        const f = (p.folder || '');
+        return want === '' ? !f : (f === want || f.startsWith(want + '/'));
+      }).map(p => p.id);
+    }
+    if (low.startsWith('track:')) {
+      const want = low.slice(6).trim();
+      return rows.filter(p => resolvedTrack(p) === want).map(p => p.id);
+    }
+    if (t.includes('*')) {
+      const rx = new RegExp('^' + t.split('*').map(x =>
+        x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$', 'i');
+      return rows.filter(p => rx.test(p.name || '') || rx.test(p.id)).map(p => p.id);
+    }
+    return rows.filter(p => (p.name || '').toLowerCase() === low
+      || p.id.toLowerCase() === low).map(p => p.id);
+  }
+
+  function normFolderTerm(raw) {
+    return String(raw || '').trim().replace(/^\/+|\/+$/g, '');
+  }
+
+  /** Parse tolerantly: a fenced block, stray prose around it, or bare json. */
+  function jsonPickParse(raw) {
+    let txt = String(raw || '').trim();
+    const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(txt);
+    if (fence) txt = fence[1].trim();
+    if (!txt.startsWith('{') && !txt.startsWith('[')) {
+      const i = txt.indexOf('{'), j = txt.lastIndexOf('}');
+      if (i >= 0 && j > i) txt = txt.slice(i, j + 1);
+    }
+    let d = JSON.parse(txt);
+    if (Array.isArray(d)) d = { select: d };
+    const list = d.select || d.assets || d.ids || d.names || d.match;
+    if (!Array.isArray(list) || !list.length) {
+      throw new Error('No "select" array found — it must list the asset names.');
+    }
+    const fmt = String(d.format || d.fmt || 'glb').toLowerCase();
+    if (!JSONPICK_FORMATS.includes(fmt)) {
+      throw new Error(`format "${fmt}" is not one of ${JSONPICK_FORMATS.join(', ')}`);
+    }
+    const scope = String(d.versions || d.scope || 'head').toLowerCase() === 'all' ? 'all' : 'head';
+    return {
+      action: String(d.action || 'select').toLowerCase() === 'download' ? 'download' : 'select',
+      format: fmt,
+      versions: scope,
+      name: String(d.name || d.zipName || '').trim(),
+      terms: list.map(String),
+    };
+  }
+
+  function jsonPickResolve(spec) {
+    const rows = Object.values(state.projects || {});
+    const hit = [], miss = [];
+    spec.terms.forEach(t => {
+      const ids = jsonPickMatch(t, rows);
+      if (!ids.length) miss.push(t);
+      ids.forEach(id => { if (!hit.includes(id)) hit.push(id); });
+    });
+    return { ids: hit, missing: miss };
+  }
+
+  (function wireJsonPick() {
+    const modal = document.getElementById('jsonpick-modal');
+    const input = document.getElementById('jsonpick-input');
+    const report = document.getElementById('jsonpick-report');
+    if (!modal) return;
+
+    const show = html => {
+      report.innerHTML = html;
+      report.classList.remove('hidden');
+    };
+    const close = () => { modal.classList.add('hidden'); modal.classList.remove('flex'); };
+
+    function read() {
+      const spec = jsonPickParse(input.value);
+      const res = jsonPickResolve(spec);
+      return { spec, res };
+    }
+
+    function describe(spec, res) {
+      const names = res.ids.map(id => (state.projects[id] || {}).name || id);
+      let h = `<div class="text-zinc-200 font-semibold mb-1">${res.ids.length} asset(s) matched</div>`;
+      h += `<div class="text-zinc-400 mb-2">${names.map(escapeHtml).join(', ') || '—'}</div>`;
+      h += `<div class="text-zinc-500">action ${escapeHtml(spec.action)} · format ${escapeHtml(spec.format.toUpperCase())} · versions ${escapeHtml(spec.versions)}`;
+      if (spec.name) h += ` · zip “${escapeHtml(spec.name)}”`;
+      h += '</div>';
+      if (res.missing.length) {
+        h += `<div class="text-amber-300 mt-2">no match for: ${res.missing.map(escapeHtml).join(', ')}</div>`;
+      }
+      return h;
+    }
+
+    document.getElementById('open-jsonpick-btn').addEventListener('click', () => {
+      report.classList.add('hidden');
+      modal.classList.remove('hidden'); modal.classList.add('flex');
+      setTimeout(() => input.focus(), 40);
+    });
+    document.getElementById('jsonpick-close').addEventListener('click', close);
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+
+    document.getElementById('jsonpick-check').addEventListener('click', () => {
+      try { const { spec, res } = read(); show(describe(spec, res)); }
+      catch (err) { show(`<div class="text-red-300">${escapeHtml(err.message)}</div>`); }
+    });
+
+    const apply = async download => {
+      let spec, res;
+      try { ({ spec, res } = read()); }
+      catch (err) { show(`<div class="text-red-300">${escapeHtml(err.message)}</div>`); return; }
+      if (!res.ids.length) { show(describe(spec, res)); return; }
+      state.selection = res.ids.slice();
+      state.selectMode = true;
+      document.getElementById('left-select-btn').classList.add('bg-white/20');
+      renderAll();
+      if (res.missing.length) {
+        toast('PARTIAL MATCH', `${res.ids.length} picked · no match for ${res.missing.length}`, 'warn');
+      } else {
+        toast('PICKED', `${res.ids.length} asset(s) selected`, 'ok');
+      }
+      if (download || spec.action === 'download') {
+        exportAssets(res.ids, spec.format, spec.versions, null, spec.name);
+      }
+      close();
+    };
+    document.getElementById('jsonpick-select').addEventListener('click', () => apply(false));
+    document.getElementById('jsonpick-go').addEventListener('click', () => apply(true));
+
+    document.getElementById('copy-jsonpick-btn').addEventListener('click', async e => {
+      try {
+        const btn = e.currentTarget;
+        await navigator.clipboard.writeText(jsonPickPrompt());
+        btn.classList.add('bg-emerald-400/20');
+        setTimeout(() => btn.classList.remove('bg-emerald-400/20'), 700);
+        toast('JSON-PICK PROMPT COPIED',
+          'It lists your real asset names, so the AI cannot invent one', 'ok');
+      } catch {
+        toast('COPY FAILED', 'Clipboard was refused — select the text manually', 'err');
+      }
+    });
+  })();
 
   async function boot() {
     try {

@@ -597,6 +597,68 @@ def export_artifacts(result: CompileResult, outdir: Path, slug: str) -> list:
     )
 
 
+def _slot_payload(storage, project_id, kind):
+    """Bound textures for the viewport, as hex -> {name, url}.
+
+    There are no UVs in the exported geometry and no texture binding in the
+    model or prop grammar, so this is the only route from "this colour is
+    oxidized copper" to a textured surface on screen. The client generates
+    planar UVs from world position, which is exact for axis-aligned voxel
+    faces and good enough for a swept solid.
+    """
+    try:
+        binds = storage.get_meta(project_id, "slot_bindings") or {}
+        if not binds:
+            return {}
+        by_name = {t["name"]: t for t in storage.list_textures()}
+        out = {}
+        for hx, name in binds.items():
+            t = by_name.get(name)
+            if not t:
+                continue
+            out[hx.upper()] = {
+                "name": name,
+                "url": f"/api/preview/{t['id']}/{t['head']}",
+                # One tile per block: a model measures in voxels (16 to the
+                # block), a structure measures in cells (one to the block).
+                "tile": 16.0 if kind in ("model", "prop") else 1.0,
+            }
+        return {"slotTextures": out}
+    except Exception:
+        return {}
+
+
+def _light_payload(doc):
+    """Emitters and the propagated grid, for the viewport's LIT mode.
+
+    The grid is the game's own light model, not the renderer's: point lights
+    give the look, these levels give the truth, and LIT mode shows both so
+    what you see matches what the engine will compute.
+    """
+    try:
+        import structurebridge as sb_core
+        grid = sb_core.propagate_light(doc)
+        survey = sb_core.light_survey(doc, grid)
+    except Exception:
+        return {"light": None}
+    by_mat = {}
+    for m in doc.materials.values():
+        by_mat[m["id"]] = {"light": int(m.get("light", 0) or 0),
+                           "color": m.get("color", "#9AA0A8")}
+    emitters = []
+    for (x, y, z), cell in doc.cells.items():
+        lvl = int(getattr(cell, "light", 0) or 0)
+        if lvl > 0:
+            emitters.append({"pos": [x, y, z], "level": lvl,
+                             "color": by_mat.get(cell.mat, {}).get("color", "#FFD9A0")})
+    emitters.sort(key=lambda e: -e["level"])
+    # A sparse level-per-cell list; the client reads it into a lookup.
+    cells = [[x, y, z, lvl] for (x, y, z), lvl in grid.items() if lvl > 0]
+    return {"light": {"max": sb_core.LIGHT_MAX, "threshold": sb_core.DARK_THRESHOLD,
+                      "emitters": emitters[:64], "emitterCount": len(emitters),
+                      "cells": cells, "survey": survey}}
+
+
 def mesh_payload(result: CompileResult) -> dict:
     """Real triangles for the viewport, straight from the compiled document.
 
@@ -608,6 +670,7 @@ def mesh_payload(result: CompileResult) -> dict:
     # list the components, highlight one, and scope an edit to it by name.
     groups = []   # {name, kind, start, count, color, box}
     tris = []
+    extra = {}    # track-specific additions, e.g. a model's animation clips
 
     def _rgba_of(spec, fallback=(210, 214, 222, 255)):
         if not spec:
@@ -627,6 +690,12 @@ def mesh_payload(result: CompileResult) -> dict:
             bymat.setdefault(c.mat, []).append((x, y, z, c))
         alias = {m["id"]: a for a, m in doc.materials.items()}
         colour = {m["id"]: m.get("color", "#9AA0A8") for m in doc.materials.values()}
+        # `material wall soot_iron_plate color=#3A3F45` names a texture, and
+        # the payload used to drop it - so the viewport could only ever show
+        # the colour, and a building with every texture declared still
+        # rendered as flat paint with no way to tell.
+        texname = {m["id"]: (m.get("texture") or "") for m in doc.materials.values()}
+        litlvl = {m["id"]: int(m.get("light", 0) or 0) for m in doc.materials.values()}
         colors = []
         for mid, cells in sorted(bymat.items()):
             lo, hi, n0 = [1e9] * 3, [-1e9] * 3, len(tris)
@@ -649,6 +718,9 @@ def mesh_payload(result: CompileResult) -> dict:
                 "name": alias.get(mid, f"material_{mid}"), "kind": "material",
                 "start": n0 // 9, "count": nvert // 3,
                 "color": colour.get(mid, "#9AA0A8"), "box": [lo, hi],
+                "texture": texname.get(mid, ""),
+                "light": litlvl.get(mid, 0),
+                "cells": len(cells),
             })
         mn = [min(tris[i::3]) for i in range(3)] if tris else [0, 0, 0]
         mx = [max(tris[i::3]) for i in range(3)] if tris else [0, 0, 0]
@@ -661,7 +733,8 @@ def mesh_payload(result: CompileResult) -> dict:
         return {"ok": True, "kind": "structure", "up": "Y",
                 "positions": tris, "colors": colors, "groups": groups,
                 "min": mn, "max": mx, "formCounts": counts,
-                "cellCount": len(doc.cells)}
+                "cellCount": len(doc.cells),
+                **_light_payload(doc)}
 
     if result.kind == "model":
         doc = result.doc
@@ -689,6 +762,29 @@ def mesh_payload(result: CompileResult) -> dict:
             # Fall back to the flat soup if the per-bone walk found nothing.
             tris = db_core.colored_tris(doc) or []
             groups = []
+
+        # The clips themselves. The compiler has had real keyframe animation
+        # all along - it exports proper glTF channels - but the viewport was
+        # never sent them, so the scrubber scrubbed a number that drove
+        # nothing. Per-bone groups above already carry parent and pivot, which
+        # is everything needed to pose them here.
+        clips = {}
+        for aname, anim in (getattr(doc, "anims", None) or {}).items():
+            keys = []
+            for k in anim.keys:
+                keys.append({
+                    "t": float(getattr(k, "t", 0.0) or 0.0),
+                    "bone": getattr(k, "bone", "") or "",
+                    "rot": [float(x) for x in (getattr(k, "rot", None) or ())],
+                    "pos": [float(x) for x in (getattr(k, "pos", None) or ())],
+                })
+            keys.sort(key=lambda d: d["t"])
+            clips[aname] = {
+                "loop": bool(getattr(anim, "loop", False)),
+                "duration": max([d["t"] for d in keys], default=0.0),
+                "keys": keys,
+            }
+        extra["animations"] = clips
 
     elif result.kind == "prop":
         for part in getattr(result.doc, "parts", []) or []:
@@ -744,6 +840,7 @@ def mesh_payload(result: CompileResult) -> dict:
         "positions": positions,
         "colors": colors,
         "groups": groups,
+        **extra,
         "up": "z" if result.kind == "prop" else "y",
         "units": (getattr(result.doc, "units", "") or "") if result.kind == "prop" else "px",
         "min": lo,
@@ -841,6 +938,43 @@ class StudioStorage:
                 );
                 CREATE TABLE IF NOT EXISTS folders (
                     path TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL
+                );
+                -- A PROJECT is a top-level folder treated as a repository:
+                -- every asset under its root belongs to it. The `projects`
+                -- table above is assets (it predates this and is not worth
+                -- renaming), so the container is `workspaces` internally and
+                -- "project" everywhere a person reads it.
+                -- A style lock has a SCOPE: '' is the whole workspace,
+                -- prj:<id> one project, dir:<path> one folder and everything
+                -- under it. They layer general to specific, so a region can
+                -- override the house style without restating it.
+                CREATE TABLE IF NOT EXISTS style_locks (
+                    scope TEXT PRIMARY KEY,
+                    body TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS workspaces (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    root TEXT NOT NULL,
+                    note TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS asset_meta (
+                    project_id TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    value_json TEXT NOT NULL DEFAULT '{}',
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (project_id, key)
+                );
+                CREATE TABLE IF NOT EXISTS palettes (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL DEFAULT '',
+                    name TEXT NOT NULL,
+                    body TEXT NOT NULL DEFAULT '',
+                    inherit INTEGER NOT NULL DEFAULT 1,
+                    active INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS blocks (
@@ -1167,6 +1301,8 @@ class StudioStorage:
             # the ones implied by an asset's path - are still derived; these
             # are only the ones that would otherwise vanish for being empty.
             "folders": self.list_folders(),
+            "workspaces": self.list_workspaces(),
+            "batches": self.list_batches(),
         }
 
     # ------------------------------------------------------------------
@@ -1696,6 +1832,48 @@ document arrives, so a document that fails here fails there too.
         boot["failed"] = failed
         return boot
 
+    def batch_folder(self, base: str, label: str = "") -> tuple:
+        """A dated subfolder for one import, so a batch stays together.
+
+        Everything pasted in one go used to scatter into whatever folder was
+        selected, mixed in with work from days ago. A batch now gets its own
+        folder named for when it arrived, which is also the grouping the
+        sidebar shows.
+        """
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M")
+        slug = "".join(ch if (ch.isalnum() or ch in "-_") else "-"
+                       for ch in (label or "")).strip("-")
+        name = f"batch_{stamp}" + (f"_{slug[:24]}" if slug else "")
+        path = normalize_folder(f"{base}/{name}" if base else name)
+        self._remember_folder(path)
+        return path, f"bat_{uuid.uuid4().hex[:8]}"
+
+    def stamp_batch(self, ids: list, batch_id: str, folder: str, label: str = "") -> None:
+        info = {"id": batch_id, "folder": folder, "label": label, "at": now_iso(),
+                "size": len(ids)}
+        for pid in ids:
+            self.set_meta(pid, "batch", info)
+
+    def list_batches(self) -> list:
+        """Every import group, newest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT project_id, value_json FROM asset_meta WHERE key='batch'").fetchall()
+        groups = {}
+        for r in rows:
+            try:
+                d = json.loads(r["value_json"])
+            except Exception:
+                continue
+            g = groups.setdefault(d.get("id", "?"), {
+                "id": d.get("id", "?"), "folder": d.get("folder", ""),
+                "label": d.get("label", ""), "at": d.get("at", ""), "assets": []})
+            g["assets"].append(r["project_id"])
+        out = sorted(groups.values(), key=lambda g: g["at"], reverse=True)
+        for g in out:
+            g["size"] = len(g["assets"])
+        return out
+
     def intake_documents(self, payload: dict) -> dict:
         """Take a pasted blob of AI output and file every document in it.
 
@@ -1717,6 +1895,11 @@ document arrives, so a document that fails here fails there too.
         if mode not in ("auto", "versions", "assets"):
             mode = "auto"
         folder = normalize_folder(payload.get("folder"))
+        # One import, one dated folder, so a batch stays together instead of
+        # scattering into whatever folder happened to be selected.
+        batch_id = ""
+        if payload.get("groupBatch"):
+            folder, batch_id = self.batch_folder(folder, payload.get("batchLabel") or "")
         track = (payload.get("track") or "auto").lower()
         if track not in TRACK_KINDS and track != "auto":
             track = "auto"
@@ -1796,8 +1979,13 @@ document arrives, so a document that fails here fails there too.
 
         if mode == "versions" and target:
             self.update_settings({"activeProjectId": target})
+        if batch_id:
+            made = [r["projectId"] for r in results if r.get("projectId")]
+            if made:
+                self.stamp_batch(made, batch_id, folder, payload.get("batchLabel") or "")
         boot = self.get_bootstrap_state()
         boot["intake"] = results
+        boot["batchFolder"] = folder if batch_id else ""
         return boot
 
     MAX_FOLDER_DEPTH = 5
@@ -1826,6 +2014,10 @@ document arrives, so a document that fails here fails there too.
                 hexes = palette_of(c["dsl"] or "")
                 out.append({"name": p["name"],
                             "folder": (p["folder"] if "folder" in p.keys() else "") or "",
+                            # id and head let a caller read this texture's
+                            # intent and fetch its PNG for the viewport.
+                            "id": p["id"],
+                            "head": p["head_commit_id"],
                             "colors": hexes[:4]})
         return out
 
@@ -2001,6 +2193,9 @@ document arrives, so a document that fails here fails there too.
             raise ValueError(f"{len(lines)} items is more than one batch should carry. Keep it under 40.")
         track = (payload.get("track") or "auto").lower()
         folder = normalize_folder(payload.get("folder"))
+        batch_id = ""
+        if payload.get("groupBatch"):
+            folder, batch_id = self.batch_folder(folder, payload.get("batchLabel") or "")
         made = []
         for line in lines:
             name, brief = "", line
@@ -2009,6 +2204,8 @@ document arrives, so a document that fails here fails there too.
                 name, brief = m.group(1).strip(), m.group(2).strip()
             pid = self._insert_project({"name": name, "track": track, "brief": brief, "folder": folder})
             made.append(pid)
+        if batch_id and made:
+            self.stamp_batch(made, batch_id, folder, payload.get("batchLabel") or "")
         boot = self.get_bootstrap_state()
         boot["created"] = made
         return boot
@@ -2146,6 +2343,37 @@ document arrives, so a document that fails here fails there too.
         boot["deleted"] = results
         return boot
 
+    def materials_sidecar(self, project_id: str) -> str:
+        """The slot bindings, as a file that ships beside the geometry.
+
+        The binding cannot live in the document - the model and prop
+        grammars have no texture syntax - and it cannot live in the GLB,
+        which carries no UVs. So it travels as its own small file and the
+        engine applies it.
+        """
+        binds = self.get_meta(project_id, "slot_bindings") or {}
+        if not binds:
+            return ""
+        by_name = {t["name"]: t for t in self.list_textures()}
+        slots = []
+        for hx, name in sorted(binds.items()):
+            t = by_name.get(name) or {}
+            slots.append({
+                "color": hx,
+                "texture": name,
+                "textureAsset": t.get("id", ""),
+                "target": (self.texture_intent(t["id"]) if t.get("id") else {}).get("target", ""),
+            })
+        proj = self.get_bootstrap_state()["projects"].get(project_id) or {}
+        return json.dumps({
+            "format": "strata.materials.v1",
+            "asset": proj.get("name", project_id),
+            "note": "Bind by vertex colour: every face of this colour uses that texture. "
+                    "One tile per block (16 voxels on a model, one cell on a structure).",
+            "tileVoxels": 16,
+            "slots": slots,
+        }, indent=2)
+
     def zip_name(self, project_ids: list, fmt: str, scope: str = "head",
                  override: str = "") -> str:
         """A download whose name says what is inside it.
@@ -2243,6 +2471,10 @@ document arrives, so a document that fails here fails there too.
                         inner = f"{pid}/{c['tag']}/{fname}" if many else f"{pid}/{fname}"
                         zf.writestr(inner, data)
                         written.append(f"{pid} - {fname} ({c['tag']})")
+                        # The texture bindings travel with the geometry.
+                        side = self.materials_sidecar(pid)
+                        if side:
+                            zf.writestr(f"{pid}/materials.json", side)
                 except Exception as exc:
                     skipped.append(f"{pid} - {exc}")
             manifest = ["DESIGNBRIDGE STUDIO - BULK EXPORT",
@@ -2575,6 +2807,565 @@ document arrives, so a document that fails here fails there too.
         self._write_project_manifest(project_id)
         return self.get_bootstrap_state()
 
+    # ---- animating a revision that already exists -----------------------
+    #
+    # Asking for geometry and animation in one answer means the model
+    # re-emits every box to add a wave, which is expensive and routinely
+    # corrupts a mesh that was already approved. These two let the clips
+    # arrive on their own and be merged into the revision you already have.
+
+    @staticmethod
+    def _anim_block_name(line: str) -> str:
+        rest = line.strip()[len("animation"):].strip()
+        if rest.startswith('"') and '"' in rest[1:]:
+            return rest[1:].split('"', 1)[0]
+        return rest.split()[0].strip('"') if rest.split() else ""
+
+    @classmethod
+    def extract_animation_blocks(cls, text: str) -> list:
+        """Every `animation` block in a reply, each as its own chunk.
+
+        Tolerant on purpose: a model may wrap the answer in a fence, explain
+        itself first, or hand back a whole document when only clips were
+        asked for.
+        """
+        body = text or ""
+        fence = re.search(r"```[A-Za-z]*\s*(.*?)```", body, re.S)
+        if fence:
+            body = fence.group(1)
+        body = body.replace("<<<DESIGN", "").replace(">>>", "")
+        blocks, cur = [], None
+        for raw in body.splitlines():
+            head = raw.strip().split()[0].lower() if raw.strip().split() else ""
+            if head == "animation":
+                if cur:
+                    blocks.append("\n".join(cur).rstrip())
+                cur = [raw.rstrip()]
+                continue
+            if head in ("model", "bone", "design", "texture", "structure"):
+                if cur:
+                    blocks.append("\n".join(cur).rstrip())
+                cur = None
+                continue
+            if cur is not None:
+                cur.append(raw.rstrip())
+        if cur:
+            blocks.append("\n".join(cur).rstrip())
+        return [b for b in blocks if b.strip()]
+
+    @classmethod
+    def merge_animations(cls, dsl: str, blocks: list) -> str:
+        """Put `blocks` into `dsl`, replacing any clip of the same name.
+
+        A clip the new blocks do not mention is left alone, so animating a
+        lunge does not silently drop the walk cycle.
+        """
+        incoming = {cls._anim_block_name(b.splitlines()[0]) for b in blocks}
+        kept, skipping = [], False
+        for raw in (dsl or "").splitlines():
+            head = raw.strip().split()[0].lower() if raw.strip().split() else ""
+            if head == "animation":
+                skipping = cls._anim_block_name(raw) in incoming
+                if skipping:
+                    continue
+            elif head in ("model", "bone", "design", "texture", "structure"):
+                skipping = False
+            if not skipping:
+                kept.append(raw.rstrip())
+        while kept and not kept[-1].strip():
+            kept.pop()
+        return "\n".join(kept) + "\n\n" + "\n\n".join(b.strip() for b in blocks) + "\n"
+
+    # ---- per-project art-style variants ---------------------------------
+    #
+    # One project holds several regions, and each has its own palette off the
+    # same locked art style - Overgrown Shelf is not Ashen Foundry Basin.
+    # A variant is a named style text; the active one is appended to the
+    # project-wide lock, so a region overrides without restating everything.
+
+    # ---- per-asset metadata ---------------------------------------------
+    #
+    # Two things live here, and they are the same shape: what a texture is
+    # FOR, and which texture fills a model or prop's material slots. Neither
+    # can go in the document, because the model and prop grammars have no
+    # texture binding and designbridge.py is not ours to change.
+
+    TEXTURE_TARGETS = ("block", "prop", "model")
+
+    def get_meta(self, project_id: str, key: str, default=None):
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value_json FROM asset_meta WHERE project_id=? AND key=?",
+                (project_id, key)).fetchone()
+        if not row:
+            return default
+        try:
+            return json.loads(row["value_json"])
+        except Exception:
+            return default
+
+    def set_meta(self, project_id: str, key: str, value) -> dict:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO asset_meta (project_id, key, value_json, updated_at)"
+                " VALUES (?,?,?,?) ON CONFLICT(project_id, key)"
+                " DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at",
+                (project_id, key, json.dumps(value), now_iso()))
+        return {"ok": True, "value": value}
+
+    def apply_blockplan(self, payload: dict) -> dict:
+        """Take the model's answer and make it the actual constraint.
+
+        Without this the plan is just a chat message. Stored, it narrows the
+        form allow-list and gets stated back in the build prompt, which is
+        what makes "use these blocks" true rather than hopeful.
+        """
+        project_id = (payload.get("projectId") or "").strip()
+        text = payload.get("text") or ""
+        body = text
+        fence = re.search(r"```[A-Za-z]*\s*(.*?)```", body, re.S)
+        if fence:
+            body = fence.group(1)
+        i, j = body.find("{"), body.rfind("}")
+        if i < 0 or j <= i:
+            raise ValueError("No json object in that text. It should start with { and "
+                             'contain "forms" and "materials".')
+        try:
+            plan = json.loads(body[i:j + 1])
+        except Exception as exc:
+            raise ValueError(f"That json does not parse: {exc}")
+
+        forms = [str(f).strip() for f in (plan.get("forms") or []) if str(f).strip()]
+        bad_forms = [f for f in forms if f not in CORE_12]
+        forms = [f for f in forms if f in CORE_12]
+
+        mats, seen = [], set()
+        for m in (plan.get("materials") or []):
+            if not isinstance(m, dict):
+                continue
+            alias = str(m.get("alias") or "").strip()
+            if not alias or alias in seen:
+                continue
+            seen.add(alias)
+            try:
+                lvl = int(m.get("light", 0) or 0)
+            except Exception:
+                lvl = 0
+            mats.append({
+                "alias": alias,
+                "texture": str(m.get("texture") or "").strip(),
+                "color": str(m.get("color") or "").strip() or "#9AA0A8",
+                "light": max(0, min(15, lvl)),
+            })
+        if not forms and not mats:
+            raise ValueError('That json has neither "forms" nor "materials".')
+
+        known = {t["name"] for t in self.list_textures()}
+        missing = sorted({m["texture"] for m in mats if m["texture"] and m["texture"] not in known})
+
+        self.set_meta(project_id, "block_plan", {"forms": forms, "materials": mats})
+        # The form allow-list lives in the project style, which the client
+        # owns, so the forms go back for it to apply - one source of truth.
+        return {"ok": True, "forms": forms, "materials": mats,
+                "missingTextures": missing, "rejectedForms": bad_forms}
+
+    def block_plan(self, project_id: str) -> dict:
+        return self.get_meta(project_id, "block_plan") or {"forms": [], "materials": []}
+
+    def texture_intent(self, project_id: str) -> dict:
+        """What a texture is for, and therefore how it must be built.
+
+        A block face has to tile in both axes; a wrap round a revolved prop
+        only has to tile around it; a panel on one box face of a model need
+        not tile at all. That changes which layers are even legal, so it is
+        not a label - it is a constraint.
+        """
+        got = self.get_meta(project_id, "texture_intent") or {}
+        return {"target": got.get("target", "block"),
+                "wrap": got.get("wrap", "around"),
+                "note": got.get("note", "")}
+
+    def asset_slots(self, project_id: str) -> dict:
+        """The material slots of a model or prop, keyed on colour.
+
+        A box or a swept solid already carries `color=#hex`, and the region
+        palette already names those colours - so the colour IS the slot. A
+        model has many boxes but few distinct colours, which is why binding
+        per colour answers "which part of the model" without needing a new
+        grammar or a slot per box.
+        """
+        boot = self.get_bootstrap_state()
+        proj = boot["projects"].get(project_id)
+        if not proj:
+            raise ValueError("Project not found")
+        commit = self._commit_row(project_id, proj["headCommitId"])
+        dsl = (commit["dsl"] or "").strip()
+        if not dsl:
+            return {"ok": True, "kind": "", "slots": [], "bindings": {}}
+        result = compile_source(dsl)
+        if not result.ok:
+            return {"ok": True, "kind": result.kind or "", "slots": [], "bindings": {},
+                    "error": "This revision does not compile, so it has no slots yet."}
+        doc, kind = result.doc, result.kind
+        counts = {}
+
+        def bump(col, where):
+            if not col:
+                return
+            hx = col if isinstance(col, str) else None
+            if hx is None:
+                try:
+                    hx = "#%02X%02X%02X" % tuple(int(c) for c in col[:3])
+                except Exception:
+                    return
+            hx = hx.upper()
+            if not hx.startswith("#"):
+                hx = "#" + hx
+            e = counts.setdefault(hx, {"hex": hx, "count": 0, "where": []})
+            e["count"] += 1
+            if where and where not in e["where"]:
+                e["where"].append(where)
+
+        if kind == "model":
+            for name, bone in (doc.bones or {}).items():
+                for bx in (getattr(bone, "boxes", None) or []):
+                    bump(getattr(bx, "colorspec", None) or getattr(bx, "color", None), name)
+        elif kind == "prop":
+            for sol in (getattr(doc, "solids", None) or {}).values() if isinstance(
+                    getattr(doc, "solids", None), dict) else (getattr(doc, "solids", None) or []):
+                bump(getattr(sol, "colorspec", None) or getattr(sol, "color", None),
+                     getattr(sol, "name", ""))
+        elif kind == "structure":
+            for alias, m in (getattr(doc, "materials", None) or {}).items():
+                bump(m.get("color"), alias)
+
+        slots = sorted(counts.values(), key=lambda d: -d["count"])
+        names = {c["hex"]: c["name"] for c in
+                 [{"hex": h, "name": n} for n, h in named_palette(
+                     self.effective_lock("", self.get_settings().get("styleLock", "")))]}
+        for sl in slots:
+            sl["name"] = names.get(sl["hex"], "")
+        return {"ok": True, "kind": kind, "slots": slots,
+                "bindings": self.get_meta(project_id, "slot_bindings") or {}}
+
+    def usable_textures(self, target: str = "") -> list:
+        """Textures whose declared target fits what is asking for them."""
+        out = []
+        for t in self.list_textures():
+            pid = t.get("id") or t.get("projectId") or ""
+            intent = self.texture_intent(pid) if pid else {"target": "block"}
+            if target and intent.get("target") != target:
+                continue
+            row = dict(t)
+            row["intent"] = intent
+            out.append(row)
+        return out
+
+    # ---- projects (workspaces) ------------------------------------------
+
+    def list_workspaces(self) -> list:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM workspaces ORDER BY name").fetchall()
+            assets = conn.execute("SELECT id, folder FROM projects").fetchall()
+        out = []
+        for r in rows:
+            root = r["root"] or ""
+            n = sum(1 for a in assets
+                    if (a["folder"] or "") == root or (a["folder"] or "").startswith(root + "/"))
+            out.append({"id": r["id"], "name": r["name"], "root": root,
+                        "note": r["note"], "assets": n})
+        return out
+
+    def save_workspace(self, payload: dict) -> dict:
+        name = (payload.get("name") or "").strip()
+        root = normalize_folder(payload.get("root") or "")
+        if not name:
+            raise ValueError("A project needs a name.")
+        if not root:
+            raise ValueError("A project is a top-level folder, so it needs a root folder.")
+        wid = (payload.get("id") or "").strip() or f"prj_{uuid.uuid4().hex[:8]}"
+        with self._connect() as conn:
+            if conn.execute("SELECT id FROM workspaces WHERE id=?", (wid,)).fetchone():
+                conn.execute("UPDATE workspaces SET name=?, root=?, note=? WHERE id=?",
+                             (name, root, payload.get("note") or "", wid))
+            else:
+                conn.execute("INSERT INTO workspaces (id, name, root, note, created_at)"
+                             " VALUES (?,?,?,?,?)",
+                             (wid, name, root, payload.get("note") or "", now_iso()))
+        self._remember_folder(root)      # the root exists even while empty
+        return {"ok": True, "id": wid, "workspaces": self.list_workspaces()}
+
+    def delete_workspace(self, payload: dict) -> dict:
+        """Forget the project. The folders and assets under it are untouched."""
+        wid = (payload.get("id") or "").strip()
+        with self._connect() as conn:
+            conn.execute("DELETE FROM workspaces WHERE id=?", (wid,))
+        return {"ok": True, "workspaces": self.list_workspaces()}
+
+    def workspace_history(self, workspace_id: str, limit: int = 120) -> dict:
+        """What has happened to the whole project, not to one asset.
+
+        Every revision so far was only visible from inside the asset that
+        owned it, so there was no way to see what the project gained this
+        week. This is that feed: one line per revision across every asset
+        under the project root, newest first.
+        """
+        wss = {w["id"]: w for w in self.list_workspaces()}
+        ws = wss.get(workspace_id)
+        if not ws:
+            raise ValueError("Project not found")
+        root = ws["root"]
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT c.id, c.project_id, c.tag, c.status, c.errors, c.note,"
+                "       c.created_at, c.seq, p.name AS asset, p.folder AS folder,"
+                "       p.track AS track"
+                "  FROM commits c JOIN projects p ON p.id = c.project_id"
+                " ORDER BY c.created_at DESC").fetchall()
+        feed, seen_first = [], {}
+        for r in rows:
+            fol = r["folder"] or ""
+            if not (fol == root or fol.startswith(root + "/")):
+                continue
+            feed.append({
+                "commitId": r["id"], "assetId": r["project_id"], "asset": r["asset"],
+                "folder": fol, "track": r["track"], "tag": r["tag"],
+                "status": r["status"], "errors": r["errors"], "note": r["note"] or "",
+                "at": r["created_at"], "seq": r["seq"],
+                "kind": "added" if r["seq"] == 1 else "revised",
+            })
+        for e in feed:
+            seen_first.setdefault(e["assetId"], 0)
+            seen_first[e["assetId"]] += 1
+        return {"ok": True, "project": ws, "events": feed[:limit],
+                "total": len(feed), "assets": len(seen_first)}
+
+    def list_palettes(self, project_id: str = "") -> list:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM palettes WHERE project_id=? ORDER BY created_at",
+                (project_id or "",)).fetchall()
+        return [{"id": r["id"], "projectId": r["project_id"], "name": r["name"],
+                 "body": r["body"], "inherit": bool(r["inherit"]),
+                 "active": bool(r["active"]),
+                 "colors": [{"name": n, "hex": h} for n, h in named_palette(r["body"])]}
+                for r in rows]
+
+    def save_palette(self, payload: dict) -> dict:
+        pid = (payload.get("projectId") or "").strip()
+        name = (payload.get("name") or "").strip()
+        if not name:
+            raise ValueError("A variant needs a name.")
+        vid = (payload.get("id") or "").strip() or f"pal_{uuid.uuid4().hex[:8]}"
+        body = payload.get("body") or ""
+        inherit = 1 if payload.get("inherit", True) else 0
+        with self._connect() as conn:
+            exists = conn.execute("SELECT id FROM palettes WHERE id=?", (vid,)).fetchone()
+            if exists:
+                conn.execute("UPDATE palettes SET name=?, body=?, inherit=? WHERE id=?",
+                             (name, body, inherit, vid))
+            else:
+                conn.execute(
+                    "INSERT INTO palettes (id, project_id, name, body, inherit, active, created_at)"
+                    " VALUES (?,?,?,?,?,?,?)",
+                    (vid, pid, name, body, inherit, 0, now_iso()))
+        if payload.get("activate"):
+            self.activate_palette({"projectId": pid, "id": vid})
+        return {"ok": True, "id": vid, "palettes": self.list_palettes(pid)}
+
+    def activate_palette(self, payload: dict) -> dict:
+        pid = (payload.get("projectId") or "").strip()
+        vid = (payload.get("id") or "").strip()
+        with self._connect() as conn:
+            conn.execute("UPDATE palettes SET active=0 WHERE project_id=?", (pid,))
+            if vid:
+                conn.execute("UPDATE palettes SET active=1 WHERE id=? AND project_id=?", (vid, pid))
+        return {"ok": True, "palettes": self.list_palettes(pid)}
+
+    def delete_palette(self, payload: dict) -> dict:
+        vid = (payload.get("id") or "").strip()
+        pid = (payload.get("projectId") or "").strip()
+        with self._connect() as conn:
+            conn.execute("DELETE FROM palettes WHERE id=?", (vid,))
+        return {"ok": True, "palettes": self.list_palettes(pid)}
+
+    # ---- scoped style locks ---------------------------------------------
+
+    SCOPE_ALL = ""
+
+    def list_locks(self) -> list:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM style_locks ORDER BY scope").fetchall()
+        return [{"scope": r["scope"], "body": r["body"], "at": r["updated_at"]}
+                for r in rows if (r["body"] or "").strip()]
+
+    def set_lock(self, scope: str, body: str) -> dict:
+        scope = (scope or "").strip()
+        with self._connect() as conn:
+            if (body or "").strip():
+                conn.execute(
+                    "INSERT INTO style_locks (scope, body, updated_at) VALUES (?,?,?)"
+                    " ON CONFLICT(scope) DO UPDATE SET body=excluded.body,"
+                    " updated_at=excluded.updated_at",
+                    (scope, body, now_iso()))
+            else:
+                conn.execute("DELETE FROM style_locks WHERE scope=?", (scope,))
+        return {"ok": True, "locks": self.list_locks()}
+
+    def scopes_for_asset(self, project_id: str) -> list:
+        """Which lock scopes cover this asset, general to specific."""
+        boot = self.get_bootstrap_state()
+        proj = boot["projects"].get(project_id) or {}
+        folder = (proj.get("folder") or "").strip("/")
+        out = [self.SCOPE_ALL]
+        for w in self.list_workspaces():
+            root = w["root"]
+            if folder == root or folder.startswith(root + "/"):
+                out.append(f"prj:{w['id']}")
+        if folder:
+            segs = folder.split("/")
+            for i in range(len(segs)):
+                out.append("dir:" + "/".join(segs[:i + 1]))
+        return out
+
+    def lock_label(self, scope: str) -> str:
+        if not scope:
+            return "every project"
+        if scope.startswith("prj:"):
+            w = next((x for x in self.list_workspaces() if x["id"] == scope[4:]), None)
+            return f"project {w['name']}" if w else "a project that no longer exists"
+        if scope.startswith("dir:"):
+            return f"folder {scope[4:]}"
+        return scope
+
+    def resolved_lock(self, project_id: str, fallback: str = "") -> dict:
+        """Every lock that covers this asset, layered general to specific.
+
+        The lock used to be one global string, so a workspace holding two
+        art directions could only have one of them. Scoped, the house style
+        stays at the top and a project or a folder adds to it - which is the
+        same inheritance the region palettes already use.
+        """
+        stored = {l["scope"]: l["body"] for l in self.list_locks()}
+        if self.SCOPE_ALL not in stored and (fallback or "").strip():
+            stored[self.SCOPE_ALL] = fallback      # the old global setting
+        parts, used = [], []
+        for sc in self.scopes_for_asset(project_id):
+            body = (stored.get(sc) or "").strip()
+            if not body:
+                continue
+            used.append({"scope": sc, "label": self.lock_label(sc)})
+            parts.append(body if sc == self.SCOPE_ALL
+                         else f"# {self.lock_label(sc).upper()}\n{body}")
+        return {"text": "\n\n".join(parts), "applied": used}
+
+    def effective_lock(self, project_id: str, base_lock: str) -> str:
+        """The project lock with the active variant layered on top."""
+        for v in self.list_palettes(project_id):
+            if v["active"]:
+                if v["inherit"] and (base_lock or "").strip():
+                    return (base_lock.rstrip() + "\n\n"
+                            + f"REGION / VARIANT: {v['name']}\n" + (v["body"] or ""))
+                return f"REGION / VARIANT: {v['name']}\n" + (v["body"] or "")
+        return base_lock or ""
+
+    def animation_brief(self, project_id: str, clips: str = "") -> dict:
+        """The prompt that asks for clips only, for the rig as it stands."""
+        boot = self.get_bootstrap_state()
+        proj = boot["projects"].get(project_id)
+        if not proj:
+            raise ValueError("Project not found")
+        commit = self._commit_row(project_id, proj["headCommitId"])
+        dsl = (commit["dsl"] or "").strip()
+        if not dsl:
+            raise ValueError("This revision has no source to animate yet.")
+        result = compile_source(dsl)
+        if not result.ok or result.kind != "model":
+            raise ValueError(
+                "Only the model track animates - a prop or a texture has no bones."
+                if result.ok else "This revision does not compile, so there is no rig to animate."
+            )
+        doc = result.doc
+        rows = []
+        for name in (getattr(doc, "order", None) or list(doc.bones.keys())):
+            b = doc.bones.get(name)
+            if not b:
+                continue
+            pv = getattr(b, "pivot", (0, 0, 0)) or (0, 0, 0)
+            par = getattr(b, "parent", None)
+            rows.append(f"  {name:<16} pivot=({pv[0]:g},{pv[1]:g},{pv[2]:g})"
+                        + (f"  parent={par}" if par else "  (root)"))
+        existing = sorted((getattr(doc, "anims", None) or {}).keys())
+        wanted = [c.strip() for c in re.split(r"[,\n]", clips or "") if c.strip()]
+        if not wanted:
+            wanted = ["idle", "walk", "attack", "hit", "death"]
+
+        P = [
+            f'Write keyframe animation for an existing rig named "{doc.name}".',
+            "",
+            "Return ONLY `animation` blocks. Do NOT repeat the model, the bones or the",
+            "boxes - the geometry is already approved and will be reused exactly as it is.",
+            "Anything else you send for it will be ignored.",
+            "",
+            "THE RIG YOU ARE ANIMATING - these bone names are the only legal targets:",
+            *rows,
+            "",
+            "A bone rotates about its own pivot and carries its children with it.",
+            "",
+            "SYNTAX",
+            '  animation "<name>" [loop=true|false]',
+            "    key <bone> t=<seconds> rot=(rx,ry,rz)     # degrees, XYZ, about the pivot",
+            "    key <bone> t=<seconds> pos=(dx,dy,dz)     # offset in pixels",
+            "",
+            "RULES",
+            "  - t starts at 0 and increases. Give every clip a key at t=0.",
+            "  - A looping clip must end in the same pose it started, or it will jump.",
+            "  - One bone per key line. Several bones at the same t is several lines.",
+            "  - 3 to 5 keys per clip. Interpolation between them is linear and free,",
+            "    so do not write a key per frame.",
+            "  - Rotate rather than translate wherever a joint would really rotate.",
+            "",
+            "CLIPS WANTED: " + ", ".join(wanted),
+        ]
+        if existing:
+            P.append("")
+            P.append("This rig already has: " + ", ".join(existing)
+                     + ". Re-sending one of those names replaces it; any you leave out are kept.")
+        P.append("")
+        P.append("WORKED EXAMPLE")
+        P.append('animation "lunge" loop=false')
+        P.append("  key arm_r t=0 rot=(0,0,0)")
+        P.append("  key arm_r t=0.25 rot=(-110,0,0)")
+        P.append("  key arm_r t=0.6 rot=(0,0,0)")
+        return {"ok": True, "prompt": "\n".join(P),
+                "bones": [r.strip().split()[0] for r in rows], "existing": existing}
+
+    def apply_animation(self, payload: dict) -> dict:
+        """Merge pasted clips into the head revision and compile it."""
+        project_id = (payload.get("projectId") or "").strip()
+        boot = self.get_bootstrap_state()
+        proj = boot["projects"].get(project_id)
+        if not proj:
+            raise ValueError("Project not found")
+        commit = self._commit_row(project_id, proj["headCommitId"])
+        head_dsl = (commit["dsl"] or "").strip()
+        if not head_dsl:
+            raise ValueError("This revision has no source to animate yet.")
+        text = payload.get("text") or ""
+        blocks = self.extract_animation_blocks(text)
+        if not blocks:
+            raise ValueError(
+                'No animation blocks in that text. Each clip starts with '
+                'animation "name" and its key lines follow it.'
+            )
+        merged = self.merge_animations(head_dsl, blocks)
+        names = [self._anim_block_name(b.splitlines()[0]) for b in blocks]
+        out = dict(payload)
+        out["rawAiResponse"] = merged
+        out["note"] = (payload.get("note") or "").strip() or (
+            "Animation: " + ", ".join(n for n in names if n))
+        return self.compile_and_save(out)
+
     def compile_and_save(self, payload: dict) -> dict:
         project_id = payload["projectId"]
         raw_response = payload.get("rawAiResponse", "")
@@ -2773,6 +3564,9 @@ document arrives, so a document that fails here fails there too.
                 zf.writestr(f"{base}/source.db", commit["dsl"])
                 zf.writestr(f"{base}/report.txt", commit["report"])
                 zf.writestr(f"{base}/commit.json", json.dumps(commit, indent=2))
+                side = self.materials_sidecar(project_id)
+                if side:
+                    zf.writestr(f"{base}/materials.json", side)
                 for name, blob in files.items():
                     zf.writestr(f"{base}/{name}", blob)
                 thumb = self.get_thumbnail_bytes(project_id, commit_id)
@@ -2813,7 +3607,27 @@ document arrives, so a document that fails here fails there too.
             return {"ok": True, "kind": "texture", "triangles": 0,
                     "size": getattr(result.doc, "size", 0),
                     "preview": f"/api/preview/{project_id}/{commit_id}"}
-        return mesh_payload(result)
+        out = mesh_payload(result)
+        out.update(_slot_payload(self, project_id, result.kind))
+        # A structure declares its textures in the document itself, so resolve
+        # each one to a real asset: the UI must be able to say "this material
+        # names a texture that does not exist" rather than quietly painting it.
+        if result.kind == "structure":
+            known = {t["name"]: t for t in self.list_textures()}
+            for g in out.get("groups", []):
+                nm = g.get("texture") or ""
+                if not nm:
+                    g["texState"] = "none"
+                    continue
+                t = known.get(nm)
+                if not t:
+                    g["texState"] = "missing"
+                    continue
+                g["texState"] = "ok"
+                g["texUrl"] = f"/api/preview/{t['id']}/{t['head']}"
+                g["texAsset"] = t["id"]
+                g["texTarget"] = self.texture_intent(t["id"]).get("target", "block")
+        return out
 
     def preview_png(self, project_id: str, commit_id: str) -> bytes | None:
         """designbridge's own rendered preview for this revision."""
@@ -2953,6 +3767,122 @@ BUDGET = {
     # how many volumes it takes to describe, not how many cells come out.
     "structure": {1: (6, 2), 2: (12, 3), 3: (24, 5), 4: (40, 8), 5: (72, 12)},
 }
+# Clips and keys per clip, by complexity. Asking for a key per frame is the
+# commonest animation mistake: interpolation is linear and free, so poses are
+# what is wanted, not frames.
+CLIP_BUDGET = {1: (2, 3), 2: (3, 4), 3: (5, 5), 4: (6, 6), 5: (8, 8)}
+
+
+# Measured in GRAMMAR_NOTES.md: these layers do not wrap across the tile edge,
+# so they are bugs on a block face and perfectly good on a panel that never
+# repeats. The target decides which list applies.
+NON_TILING_LAYERS = ("noise", "veins", "bevel", "outline", "border")
+
+
+def texture_target_block(intent: dict) -> str:
+    """What this texture is for, and therefore what correct means.
+
+    Not every texture is a block. A cube face has to tile in both axes; a
+    wrap round a revolved prop only has to tile around it; a panel on one
+    box face of a model need not tile at all. Authoring all three as if
+    they were cubes is why decals and labels came back unusable.
+    """
+    target = (intent or {}).get("target", "block")
+    wrap = (intent or {}).get("wrap", "around")
+    L = ["WHAT THIS TEXTURE IS FOR"]
+    if target == "block":
+        L += [
+            "  A BLOCK face - a cube in a structure, repeated edge to edge in every",
+            "  direction. It must tile seamlessly in BOTH axes.",
+            "",
+            "  So: " + ", ".join(NON_TILING_LAYERS) + " do NOT wrap across the tile",
+            "  edge. Keep them away from the outer 2 pixels, or leave them out. `brick`",
+            "  staggers and wraps correctly, so it is safe anywhere.",
+            "  Do not draw a border, a frame or a single centred motif: you will see",
+            "  the seam repeat as a grid the moment two blocks sit side by side.",
+        ]
+    elif target == "prop":
+        L += [
+            "  A PROP surface - wrapped round a solid that was revolved or extruded.",
+            f"  It repeats {'around the axis only' if wrap == 'around' else 'along the sweep only'}.",
+            "",
+            "  So it must tile in ONE axis and is free in the other: horizontal bands,",
+            "  rivet lines and wear that runs round the body all work. A vertical",
+            "  gradient, a rim at the top or a different base is fine and will not",
+            "  seam, because that edge is never repeated.",
+        ]
+    else:
+        L += [
+            "  A MODEL panel - painted on one box face of a rigged model. It does not",
+            "  repeat, so it does not have to tile at all.",
+            "",
+            "  This is the one target where " + ", ".join(NON_TILING_LAYERS),
+            "  are all legal and useful: a border reads as a panel edge, an outline as",
+            "  a stencil, a single centred motif as an insignia. Compose it as one",
+            "  picture rather than as a repeating field.",
+        ]
+    note = (intent or {}).get("note", "").strip()
+    if note:
+        L += ["", "  " + note]
+    return "\n".join(L)
+
+
+def slot_block(slots: list, bindings: dict, kind: str) -> str:
+    """The asset's material slots, so the AI knows which colours are textured.
+
+    A box or a solid already carries `color=#hex` and the palette already
+    names those colours, so the colour IS the slot - which is how "which
+    part of the model" gets an answer without a slot per box.
+    """
+    if not slots:
+        return ""
+    L = ["MATERIAL SLOTS - this asset's colours, and the textures on them",
+         "  Keep using these colours. A colour with a texture bound to it is",
+         "  painted with that texture in the engine; the colour stays as its tint."]
+    for sl in slots[:12]:
+        hx = sl.get("hex", "")
+        nm = sl.get("name") or ""
+        tex = bindings.get(hx, "")
+        where = ", ".join(sl.get("where", [])[:3])
+        line = f"  {hx}"
+        if nm:
+            line += f"  {nm}"
+        line += f"   x{sl.get('count', 0)}"
+        if where:
+            line += f"   on {where}"
+        line += f"   -> {tex if tex else 'no texture (flat colour)'}"
+        L.append(line)
+    if kind == "model":
+        L.append("  Reuse a colour for every part made of the same stuff - one slot for all")
+        L.append("  the plating beats a different shade per box, and it is what gets textured.")
+    return "\n".join(L)
+
+
+def clips_block(wanted: list, lvl: int = 3) -> str:
+    """Ask for animation alongside the geometry, in the same answer."""
+    max_clips, max_keys = CLIP_BUDGET.get(lvl, CLIP_BUDGET[3])
+    names = [w for w in (wanted or []) if w][:max_clips]
+    L = ["ANIMATION - required this round",
+         f"  Write {'the clips below' if names else 'the clips the brief asks for'}"
+         f" as well as the geometry, at most {max_keys} keys each.",
+         "",
+         '  animation "<name>" [loop=true|false]',
+         "    key <bone> t=<seconds> rot=(rx,ry,rz)     # degrees, XYZ, about the pivot",
+         "    key <bone> t=<seconds> pos=(dx,dy,dz)     # offset in pixels",
+         "",
+         "  - Put the animation blocks after every bone, at the end of the document.",
+         "  - t starts at 0 and increases. Every clip needs a key at t=0.",
+         "  - A looping clip ends in the pose it started, or it visibly jumps.",
+         "  - One bone per key line.",
+         "  - Interpolation between keys is linear and free: write poses, not frames.",
+         "  - Give a bone a pivot at the joint it turns about, or it will rotate",
+         "    about the origin and swing through the body."]
+    if names:
+        L.append("")
+        L.append("  CLIPS WANTED: " + ", ".join(names))
+    return "\n".join(L)
+
+
 # Largest allowed long:short ratio on a single box.
 ASPECT_CAP = {"cubic": 2.0, "mixed": 4.0, "elongated": 0.0}  # 0 = uncapped
 
@@ -3296,14 +4226,21 @@ HOW YOU FIND OUT WHAT YOU ACTUALLY MADE
   watching a real 3D render of the same asset, so the report and the render
   always agree - if the report says watertight, it is watertight.
 
-THE THREE KINDS OF ASSET
-  model    a rigged blocky/voxel object - bones, boxes, keyframe animation.
-           Characters, mobs, machines, anything with moving parts.
-  prop     a CAD solid swept from a 2D profile - revolve, extrude, loft.
-           Vessels, tools, furniture; anything turned or extruded.
-  texture  a layered procedural pixel texture plus a material map.
-           Block faces, surfaces, tiles.
+THE FOUR KINDS OF ASSET
+  model      a rigged blocky/voxel object - bones, boxes, keyframe animation.
+             Characters, mobs, machines, anything with moving parts.
+             The document starts with `model`.
+  prop       a CAD solid swept from a 2D profile - revolve, extrude, loft.
+             Vessels, tools, furniture; anything turned or extruded.
+             The document starts with `design`, not `prop`.
+  texture    a layered procedural pixel texture plus a material map.
+             Block faces, surfaces, tiles. Starts with `texture`.
+  structure  a building, assembled from block forms on a cell grid - walls,
+             ruins, rooms, towers. You write volumes, never single cells.
+             Starts with `structure`.
   You are told which kind you are writing. Use that grammar and no other.
+  The first keyword of your document is what decides the kind, so it must
+  match the track you were asked for.
 
 WHAT COMES OUT THE OTHER END - the COMPILER writes these, never you
   You do not produce any of the formats below. They are what designbridge
@@ -3319,6 +4256,8 @@ WHAT COMES OUT THE OTHER END - the COMPILER writes these, never you
   prop     .glb, .obj, .stl, an .svg of the 2D profiles, .png preview
   texture  .png, a 16x upscaled .png, a _material.png packing normal into RG,
            metallic into B and roughness into A, plus a .recipe.json
+  structure a cell grid with a form, orientation and material per cell, plus
+           a .png preview and an ASCII floor plan per level
 
   These files load in Blender, three.js, Godot, Unity and custom Java/OpenGL
   engines. The numbers you choose are real dimensions in a real scene, so
@@ -3369,6 +4308,13 @@ def style_lock_text(lock: str, style: dict = None, kind: str = "model") -> str:
         "",
     ]
     lines += ["  " + l.rstrip() for l in body.splitlines()]
+    # A brief that writes `oxidized_copper` (#4E7D70) is naming a palette
+    # entry. The grammar only accepts hex, so without the mapping stated the
+    # model carries it in prose and drifts a shade at a time.
+    table = palette_table(body)
+    if table:
+        lines.append("")
+        lines += ["  " + l for l in table.splitlines()]
     # The palette and the written rules are only half of a style. The form
     # rules - how dense, how chunky, how symmetrical - are set by the Shape
     # Controls and spelled out under SHAPE BUDGET below. Without this line a
@@ -3769,6 +4715,48 @@ def palette_of(lock_text: str) -> list:
     return out
 
 
+# The name is an identifier immediately before the hex; between them a brief
+# may put any punctuation: `shadow` (`#22252A`), shadow = #22252A, shadow:
+# #22252A. The gap class excludes letters and digits, so a match can never
+# reach back across a preceding word such as "and".
+_NAMED_RE = re.compile(r"([A-Za-z][A-Za-z0-9_\-]{1,31})[^A-Za-z0-9#]{0,12}(#[0-9a-fA-F]{6})")
+_PAL_STOP = ("color", "colour", "colors", "colours", "hex", "and", "or", "the",
+             "is", "to", "in", "of", "with", "rgb")
+
+
+def named_palette(lock_text: str) -> list:
+    """(name, hex) pairs named in a style text, in the order written.
+
+    A brief that says `oxidized_copper (#4E7D70)` is naming a palette entry,
+    not just a colour, and the model has to be told both halves: the name is
+    how the brief refers to it, the hex is what the grammar accepts. Without
+    the table the model carries the mapping in prose and drifts.
+    """
+    out, seen = [], set()
+    for raw_name, hx in _NAMED_RE.findall(lock_text or ""):
+        nm = raw_name.strip("-_").lower()
+        u = hx.upper()
+        if not nm or u in seen or nm in _PAL_STOP:
+            continue
+        seen.add(u)
+        out.append((nm, u))
+    return out
+
+
+def palette_table(lock_text: str) -> str:
+    """The named palette, as a block for the prompt."""
+    pairs = named_palette(lock_text)
+    if not pairs:
+        return ""
+    L = ["THE PALETTE - these names are how the brief refers to each colour.",
+         "Write the HEX in `color=`; the grammar does not accept the names."]
+    width = max(len(n) for n, _ in pairs)
+    for nm, hx in pairs:
+        L.append(f"  {nm.ljust(width)}  {hx}")
+    L.append("Use no colour outside this list.")
+    return "\n".join(L)
+
+
 def nearest_in_palette(h: str, palette: list) -> tuple:
     """(nearest allowed hex, distance). Plain RGB distance is enough here -
     the palettes are small and well separated, and a perceptual metric would
@@ -3948,6 +4936,123 @@ def forms_block(allowed: list) -> str:
             "  A document using a form outside the list is rejected, not corrected.")
 
 
+# What each of the twelve actually is, straight out of the form table rather
+# than from memory: orientations, support rule, whether light and fluid pass,
+# and how much of a cell it fills.
+_FORM_NOTE = {
+    "cube": "the default solid block",
+    "slab_half": "half height - floors, ledges, table tops",
+    "plate_quarter": "quarter height - thin panels, catwalks, trim",
+    "stair": "a step - the only form that climbs",
+    "slope_45": "a 45 degree ramp - roofs, buttresses",
+    "slope_corner": "the corner piece that turns a slope",
+    "chamfer_edge": "a cut corner - softens a hard edge",
+    "column": "a central post - load bearing, light passes around it",
+    "girder": "a horizontal beam - spans a gap",
+    "corbel_arch": "a stepped bracket - arches, overhangs",
+    "channel_trough": "an open channel - gutters, pipes, fluid runs",
+    "trim_edge": "decorative edging - never load bearing",
+}
+
+
+def forms_catalogue() -> str:
+    """Every form with the facts that decide whether you want it."""
+    try:
+        import structurebridge as sb_core
+        rows = []
+        for spec in sb_core.FORMS:
+            name, oris, _half, support, fluid, _seal, _clad, mass = spec[:8]
+            rows.append((name, int(oris), support, fluid, float(mass)))
+    except Exception:
+        return "\n".join(f"  {f}" for f in CORE_12)
+    w = max(len(r[0]) for r in rows)
+    out = []
+    for name, oris, support, fluid, mass in rows:
+        note = _FORM_NOTE.get(name, "")
+        out.append(f"  {name.ljust(w)}  {oris:2} orientations   {support:<9} "
+                   f"fills {mass:<4}  {'light passes' if fluid == 'PASS' else 'blocks light'}"
+                   + (f"   - {note}" if note else ""))
+    return "\n".join(out)
+
+
+def agreed_plan_block(plan: dict, known: set) -> str:
+    """Say the plan back, so the build is held to what it asked for."""
+    mats = (plan or {}).get("materials") or []
+    forms = (plan or {}).get("forms") or []
+    if not mats and not forms:
+        return ""
+    L = ["THE BLOCK PLAN YOU AGREED - build with exactly this"]
+    if forms:
+        L.append("  forms: " + ", ".join(forms))
+    for m in mats:
+        tex = m.get("texture") or ""
+        mark = "" if (not tex or tex in known) else "   <- NOT IN THE WORKSPACE YET"
+        lit = f" light={m['light']}" if m.get("light") else ""
+        L.append(f"  material {m['alias']} {tex} color={m.get('color', '')}{lit}{mark}")
+    L.append("  Declare these material lines verbatim at the top of the document.")
+    L.append("  Do not rename an alias, add a material or use a form outside the list.")
+    return "\n".join(L)
+
+
+def blockplan_prompt(brief: str, textures: list, lock_text: str, allowed: list) -> str:
+    """Ask the model what it wants to build WITH, before it builds.
+
+    The app used to decide the block list and simply hand it over, so a
+    model had no say in what it was given and no reason to think about it.
+    Asked first, it commits to a palette of forms and materials - and that
+    answer becomes the constraint the build prompt states back, which is
+    what stops it inventing a material or naming a texture that is not
+    there.
+    """
+    P = ["PLAN THE BLOCKS FIRST - do not write the building yet.",
+         "",
+         "You are about to build a structure. Before any geometry, decide what you",
+         "need to build it WITH and answer with one json block and nothing else.",
+         ""]
+    if brief.strip():
+        P += ["WHAT IS BEING BUILT", "  " + brief.strip(), ""]
+    P += ["THE TWELVE FORMS - every block shape the engine has",
+          forms_catalogue(),
+          "",
+          "  Pick the fewest that do the job. A build that only needs cube, slab_half",
+          "  and stair is easier to read and cheaper to place than one using all",
+          "  twelve. Only `stair` climbs; only `column`, `girder` and `corbel_arch`",
+          "  carry a span; `trim_edge` never bears load.",
+          ""]
+    P.append(textures_block(textures))
+    P.append("")
+    pal = palette_table(lock_text)
+    if pal:
+        P += [pal, ""]
+    P += ["ANSWER IN THIS SHAPE",
+          "{",
+          '  "forms": ["cube", "slab_half", "stair", "column"],',
+          '  "materials": [',
+          '    {"alias": "wall",  "texture": "soot_iron_plate", "color": "#3A3F45"},',
+          '    {"alias": "floor", "texture": "foundry_grate",   "color": "#22252A"},',
+          '    {"alias": "lamp",  "texture": "glowstone",        "color": "#FFD9A0", "light": 14}',
+          "  ]",
+          "}",
+          "",
+          "RULES",
+          "  forms     only names from the twelve above, spelled exactly.",
+          "  alias     a short lowercase name you will use in the building, e.g. `wall`.",
+          "  texture   a name from TEXTURES AVAILABLE, or a new name you want created.",
+          "            Say in a sentence after the json which ones do not exist yet.",
+          "  color     hex, from the palette above when there is one.",
+          "  light     0-15, only on a material that glows. Leave it out otherwise.",
+          "            One level per block of reach: 14 lights 14 blocks of open air.",
+          "  Four to eight materials is usually right. One per distinct surface, not",
+          "  one per part: all the plating is one material.",
+          "",
+          "I will hold you to this list. The build prompt will state it back and a",
+          "document using anything outside it is rejected, not corrected."]
+    if allowed and len(allowed) < len(CORE_12):
+        P += ["", "This project is currently limited to: " + ", ".join(allowed),
+              "Say so if you need a form outside that."]
+    return "\n".join(P)
+
+
 def precedence_block(brief: str, lock_text: str, dsl: str = "") -> str:
     """Say once which rule wins, and pre-compute the substitutions.
 
@@ -4118,6 +5223,190 @@ def reuse_blocks_text(blocks: list, kind: str) -> str:
     return "\n".join(out)
 
 
+# ---------------------------------------------------------------------------
+# HOW TO WRITE A BRIEF
+# Handed to the AI once, so the descriptions it writes land cleanly in the
+# Studio. A brief is not geometry and never becomes geometry: it is the
+# request line of a later prompt. Everything in here is behaviour the Studio
+# actually parses - the `Animations:` line, the `name: description` form, the
+# palette names - so it is kept in step with the app, not aspirational.
+# ---------------------------------------------------------------------------
+BRIEF_GUIDE = """HOW TO WRITE ASSET BRIEFS FOR THIS PIPELINE
+
+WHAT A BRIEF IS
+  A brief is one paragraph of plain English describing ONE asset. It is not
+  the design document and it is not geometry. It becomes the request line of
+  a prompt that the Studio builds later, with the grammar, the palette, the
+  shape budget and the output contract attached automatically.
+
+  So in a brief you never write: grammar, `box`, `bone`, coordinates,
+  vertices, code, JSON, or file formats. You write intent.
+
+THE SHAPE OF ONE BRIEF
+  <snake_case_name>: <one paragraph>. Animations: <clip>, <clip>, <clip>.
+
+  Example:
+    slag_hound: compact barrel-chested quadruped furnace hound, about 1.1m
+    tall, heavy soot-basalt plating over a darker underbelly. Wide bull neck
+    with overlapping angled collar plates, two dorsal louver vents leaking
+    recessed heat glow, hinged vertical-barred jaw facing +Z that opens on a
+    glowing inner throat, piston-braced legs with brass hydraulic rods and
+    broad clamped iron paws. Animations: idle, run, bite_charge, hit, death.
+
+  The leading `name:` sets the asset name. Without it the asset is named
+  after the first document that compiles. Use snake_case: it becomes a
+  filename and an id.
+
+WHAT TO PUT IN, IN ROUGHLY THIS ORDER
+  1. SILHOUETTE FIRST. The overall read at a glance - "compact barrel-chested
+     quadruped", "tall gaunt asymmetric biped". This matters more than detail:
+     an asset is recognised by its outline before anything else.
+  2. SCALE. Give one real number - "about 2.2m tall", "roughly 11 blocks
+     wide". One is enough; the rest is inferred from it.
+  3. MASSES AND HOW THEY JOIN. Name the parts and say where they attach:
+     "reverse-joint hind legs", "left arm hangs longer as a segmented whip".
+     For anything that will animate, say which joint a part turns about -
+     that becomes its pivot, and a wrong pivot makes a limb swing through
+     the body.
+  4. MATERIALS BY PALETTE NAME. Use the names from the active region palette
+     (`shadow`, `oxidized_copper`, `emissive_thermal`). Do not invent colour
+     names and do not write hex in a brief - the palette table is attached to
+     the prompt automatically and the names are resolved there.
+  5. THE ONE READABLE DETAIL. One feature that makes it identifiable: a
+     recessed optic slit, a rear radiator drum behind grate bars, a cracked
+     ceramic shoulder. One, not six.
+  6. FACING. Say which way is forward (`+Z` is forward in this pipeline) when
+     the asset has a front.
+  7. ANIMATIONS, LAST, ON ITS OWN SENTENCE. Write exactly:
+         Animations: idle, run, lunge_attack, hit, death.
+     The Studio reads that line and pre-fills the clip list, so the names
+     must be snake_case and comma-separated. Leave the line out entirely for
+     anything that does not move.
+
+WHAT TO LEAVE OUT
+  - Lore, mood and backstory. "Haunted by the old war" compiles to nothing.
+    Describe what is VISIBLE.
+  - Counts you do not mean literally. "Dozens of pipes" becomes a shape
+    budget violation; say "three ribbed bands" if that is what you want.
+  - Hex colours, coordinates, and any syntax. Those belong to the document,
+    not the brief.
+  - Two assets in one brief. One brief, one asset. A turret and its base are
+    one asset; a turret and a wall are two.
+
+GAMEPLAY-READABLE DESIGN
+  If the asset is a threat, say what the player is meant to read. A weak point
+  belongs in the brief - "exposed radiator drum strapped across the upper back
+  behind grate bars, glowing hot, so the flank is the punish target" - because
+  it changes the geometry. Silhouette distinctions between two enemies in the
+  same region are worth stating explicitly.
+
+BUDGET AWARENESS
+  Each asset is built under a shape budget set by its complexity level, and
+  the budget is enforced by the compiler. At the default (3) a model gets
+  about 48 boxes total and 7 per bone, and animation is capped at 5 clips of
+  5 keys. Write a brief that fits that: "offset carapace plates" is buildable,
+  "individually modelled scales" is not.
+
+SEVERAL AT ONCE
+  Write one brief per line, no blank lines between, no bullets or dashes:
+
+    moss_stalker: low predatory quadruped... Animations: idle, run, hit.
+    gloom_lurker: tall gaunt biped... Animations: idle, walk, slash_attack.
+    camp_sentry_turret: grounded three-legged tripod... Animations: idle_scan.
+
+  That block goes straight into CREATE with "A DESCRIPTION" and "BATCH"
+  selected, and becomes one asset per line.
+
+IF YOU ALREADY HAVE THE DOCUMENTS
+  Briefs are only needed when the design document does not exist yet. If you
+  have already written the documents, hand those over instead and say so -
+  they go into CREATE with "THE OUTPUT ALREADY" selected, and are compiled on
+  arrival with no prompt round trip.
+"""
+
+
+# ---------------------------------------------------------------------------
+# LIGHTING
+# The units are the ones the rest of the pipeline measures in, so a brief can
+# say "lit for 6 metres" and mean something the compiler can check.
+# ---------------------------------------------------------------------------
+LIGHTING_GUIDE = """LIGHTING IN THIS PIPELINE
+
+THE UNITS - these are the real ones, not an analogy
+  1 structure cell  =  1 STRATA block  =  1 metre  =  16 voxels
+  Model and prop coordinates are in voxels, so a 32-tall model is 2 m tall.
+  Light is measured per block, so a structure's light numbers and a model's
+  size numbers are on the same scale: 16 to 1.
+
+THE LIGHT SCALE
+  Light level runs 0 to 15, whole numbers only, and loses exactly ONE level
+  per block it travels. There is no inverse-square falloff and no colour
+  bleed: the level is a count of blocks remaining.
+
+      material lamp glowstone color=#FFD9A0 light=14
+
+  That lamp is level 14 at its own cell, 13 one block away, 12 two blocks
+  away, and reaches 0 fourteen blocks out. So `light=N` means "lights N
+  blocks of open air". Pick the number from the distance you want covered:
+
+      light=15   floods a 15 m radius. A forge mouth, a rift, a reactor.
+      light=14   the standard bright lamp. A room up to ~28 m across.
+      light=10   a wall sconce. Comfortable for a 20 m hall.
+      light=7    a dim ember. Exactly at the dark threshold - see below.
+      light=4    barely visible glow. Decorative, not useful.
+      light=0    emits nothing. This is the default for every material.
+
+WHAT BLOCKS LIGHT
+  Light is stopped by a cell whose form fills half the cell or more - a cube,
+  a slab, a chamfered block. It passes through a form declared open (grates
+  and bars) and through thin forms like a quarter plate, losing the usual one
+  level per block. It does not bend around corners: light that leaves a room
+  through a doorway continues down the corridor, one level per block, and a
+  room with no opening and no lamp inside it is pitch black however bright
+  the room next door is.
+
+  So lighting an interior means putting an emitter INSIDE it. A window does
+  not let your own lamps in.
+
+THE DARK THRESHOLD
+  A standable cell - empty, with something solid under it and headroom above
+  - at or below level 7 counts as dark. The compiler reports this directly:
+
+      40 of 121 standable cells at or below level 7 (33% dark)
+      darkest standable cell is level 4
+
+  Read that line. It is the one measurement that says whether a build is
+  actually lit. If a brief asks for a lit interior, aim for 0 dark standable
+  cells; if it asks for a half-ruined hall where something could lurk, some
+  dark cells are the point - say so rather than lighting it by accident.
+
+HOW TO LIGHT A BUILD
+  1. Count the span first. A hall 20 blocks across needs an emitter within
+     10 blocks of its far corners, so one level-14 lamp in the middle covers
+     it and two level-10 sconces on opposite walls also do.
+  2. Put emitters where they would really be: sconces on walls at head height
+     (y of the floor plus 2 or 3), furnace mouths at floor level, ceiling
+     fixtures under the roof slab.
+  3. An emitter is a normal cell with an emitting material, so it still needs
+     to obey support rules and still occupies its cell.
+  4. Light the stairs and the doorways. They are where dark cells hide.
+  5. Then read the LIGHT block in the report and fix what it says. Adding one
+     lamp and recompiling is cheap.
+
+COLOUR
+  `color=` on the material is the block's own colour and also the colour of
+  the light it casts. A warm lamp is `#FFD9A0`, a furnace `#FF6A1A`, a gloom
+  crystal `#4A1C6B`. Keep these inside the region palette like any other
+  colour; an emitter is not an excuse for a new hue.
+
+WHAT YOU DO NOT WRITE
+  No light probes, no lightmaps, no shadow settings, no intensity in lumens
+  or watts, no falloff curves, no ambient or exposure values. The only
+  lighting control is `light=0..15` on a material. The renderer and the
+  engine derive everything else from the propagated levels.
+"""
+
+
 def build_engineered_prompt(payload):
     """Build the full engineered prompt with the real compiler in designbridge.py.
 
@@ -4144,6 +5433,10 @@ def build_engineered_prompt(payload):
     full_dsl = bool(payload.get("fullDsl", False))
     want_context = payload.get("context", True) is not False
     style_lock = payload.get("styleLock", "") if payload.get("styleLockOn", True) is not False else ""
+    # A region variant overrides the project lock without restating it.
+    if payload.get("variantLock"):
+        base = style_lock.rstrip()
+        style_lock = (base + "\n\n" + payload["variantLock"]) if base else payload["variantLock"]
     runnable = bool(payload.get("runnable", False))
     reuse = payload.get("blocks") or []
 
@@ -4232,6 +5525,27 @@ def build_engineered_prompt(payload):
     lock_block = style_lock_text(style_lock, payload.get("style"), kind)
     if lock_block:
         extra.append(lock_block)
+
+    # The plan the model agreed to, stated back as the constraint it is.
+    if kind == "structure" and payload.get("blockPlan"):
+        known = {t["name"] for t in (payload.get("textures") or [])}
+        blk = agreed_plan_block(payload.get("blockPlan"), known)
+        if blk:
+            extra.append(blk)
+
+    # What this texture is for decides what a correct texture even is.
+    if kind == "texture" and payload.get("textureIntent"):
+        extra.append(texture_target_block(payload.get("textureIntent")))
+
+    # A model or prop's colour slots, and which already carry a texture.
+    if kind in ("model", "prop") and payload.get("slots"):
+        extra.append(slot_block(payload.get("slots") or [],
+                                payload.get("slotBindings") or {}, kind))
+
+    # Clips alongside the geometry. Only the model track has bones to move.
+    if payload.get("wantClips") and kind == "model":
+        lvl = int(payload.get("complexity") or (payload.get("style") or {}).get("complexity") or 3)
+        extra.append(clips_block(payload.get("clips") or [], lvl))
 
     if mode == "new_take":
         extra.append(
@@ -4503,6 +5817,14 @@ def make_handler(storage: StudioStorage, html_path: Path):
                     txt = STYLE_SPEC_PROMPT.format(brief=b)
                     return self._send_json({"ok": True, "prompt": txt, "length": len(txt)})
 
+                if path == "/api/lightguide":
+                    return self._send_json({"ok": True, "prompt": LIGHTING_GUIDE,
+                                             "length": len(LIGHTING_GUIDE)})
+
+                if path == "/api/briefguide":
+                    return self._send_json({"ok": True, "prompt": BRIEF_GUIDE,
+                                             "length": len(BRIEF_GUIDE)})
+
                 if path == "/api/context":
                     return self._send_json({"ok": True, "context": SYSTEM_CONTEXT,
                                              "length": len(SYSTEM_CONTEXT)})
@@ -4671,6 +5993,92 @@ def make_handler(storage: StudioStorage, html_path: Path):
                     return self._send_json(storage.fork_branch(body["projectId"], body["sourceCommitId"], body["branchName"]))
                 if path == "/api/branches/merge":
                     return self._send_json(storage.merge_branch(body["projectId"], body["sourceCommitId"]))
+                if path == "/api/locks":
+                    return self._send_json({"ok": True, "locks": storage.list_locks(),
+                                             "scopes": storage.scopes_for_asset(
+                                                 (body.get("projectId") or "").strip()),
+                                             "resolved": storage.resolved_lock(
+                                                 (body.get("projectId") or "").strip(),
+                                                 body.get("fallback") or "")})
+                if path == "/api/locks/set":
+                    return self._send_json(storage.set_lock(
+                        body.get("scope") or "", body.get("body") or ""))
+
+                if path == "/api/workspaces":
+                    return self._send_json({"ok": True, "workspaces": storage.list_workspaces()})
+                if path == "/api/workspaces/save":
+                    return self._send_json(storage.save_workspace(body))
+                if path == "/api/workspaces/delete":
+                    return self._send_json(storage.delete_workspace(body))
+                if path == "/api/workspaces/history":
+                    return self._send_json(storage.workspace_history(
+                        (body.get("id") or "").strip(), int(body.get("limit") or 120)))
+
+                if path == "/api/blockplan/prompt":
+                    pid = (body.get("projectId") or "").strip()
+                    return self._send_json({"ok": True, "prompt": blockplan_prompt(
+                        body.get("instruction") or "",
+                        storage.list_textures(),
+                        storage.effective_lock("", (body.get("styleLock") or "")),
+                        (body.get("style") or {}).get("forms") or [])})
+
+                if path == "/api/blockplan/apply":
+                    return self._send_json(storage.apply_blockplan(body))
+
+                if path == "/api/blockplan":
+                    return self._send_json({"ok": True, "plan": storage.block_plan(
+                        (body.get("projectId") or "").strip())})
+
+                if path == "/api/texture/intent":
+                    pid = (body.get("projectId") or "").strip()
+                    if "target" in body:
+                        tgt = str(body.get("target") or "block").lower()
+                        if tgt not in storage.TEXTURE_TARGETS:
+                            raise ValueError(f"target must be one of {', '.join(storage.TEXTURE_TARGETS)}")
+                        storage.set_meta(pid, "texture_intent", {
+                            "target": tgt,
+                            "wrap": str(body.get("wrap") or "around"),
+                            "note": str(body.get("note") or ""),
+                        })
+                    return self._send_json({"ok": True, "intent": storage.texture_intent(pid)})
+
+                if path == "/api/slots":
+                    return self._send_json(storage.asset_slots(
+                        (body.get("projectId") or "").strip()))
+
+                if path == "/api/slots/bind":
+                    pid = (body.get("projectId") or "").strip()
+                    binds = storage.get_meta(pid, "slot_bindings") or {}
+                    hx = str(body.get("hex") or "").upper()
+                    tex = str(body.get("texture") or "")
+                    if tex:
+                        binds[hx] = tex
+                    else:
+                        binds.pop(hx, None)
+                    storage.set_meta(pid, "slot_bindings", binds)
+                    return self._send_json(storage.asset_slots(pid))
+
+                if path == "/api/textures/usable":
+                    return self._send_json({"ok": True, "textures": storage.usable_textures(
+                        (body.get("target") or "").strip())})
+
+                if path == "/api/palettes":
+                    return self._send_json({"ok": True, "palettes": storage.list_palettes(
+                        (body.get("projectId") or "").strip())})
+                if path == "/api/palettes/save":
+                    return self._send_json(storage.save_palette(body))
+                if path == "/api/palettes/activate":
+                    return self._send_json(storage.activate_palette(body))
+                if path == "/api/palettes/delete":
+                    return self._send_json(storage.delete_palette(body))
+
+                if path == "/api/animate/prompt":
+                    return self._send_json(storage.animation_brief(
+                        (body.get("projectId") or "").strip(), body.get("clips") or ""))
+
+                if path == "/api/animate/apply":
+                    return self._send_json(storage.apply_animation(body))
+
                 if path == "/api/compile":
                     return self._send_json(storage.compile_and_save(body))
                 if path == "/api/llm/run":

@@ -206,20 +206,28 @@ def form_tris(form_id, ori):
 
 # ---------------------------------------------------------------- document
 class Cell:
-    __slots__ = ("mat", "form", "ori", "clad", "cladmask", "crack")
+    __slots__ = ("mat", "form", "ori", "clad", "cladmask", "crack", "light")
 
-    def __init__(self, mat, form, ori=0, clad=0, cladmask=0, crack=0):
+    def __init__(self, mat, form, ori=0, clad=0, cladmask=0, crack=0, light=0):
         self.mat, self.form, self.ori = mat, form, ori
         self.clad, self.cladmask, self.crack = clad, cladmask, crack
+        self.light = light          # 0-15, emitted by this cell's material
 
     def packed(self):
-        """The engine's 64-bit sparse cell record."""
+        """The engine's 64-bit sparse cell record.
+
+        Bits 0-50 are the locked Core 12 layout and are not touched. Light
+        goes in 51-54, which were free: 4 bits for the same 0-15 scale the
+        propagation uses, so the engine can read a cell's own emission
+        without a side table.
+        """
         return ((self.mat & 0xFFFF)
                 | ((self.form & 0x3F) << 16)
                 | ((self.ori & 0x1F) << 22)
                 | ((self.clad & 0xFFFF) << 27)
                 | ((self.cladmask & 0x3F) << 43)
-                | ((self.crack & 0x3) << 49))
+                | ((self.crack & 0x3) << 49)
+                | ((self.light & 0xF) << 51))
 
 
 class Doc:
@@ -352,9 +360,20 @@ def parse(text):
                 continue
             alias = words[0]
             texture = words[1] if len(words) > 1 else ""
+            try:
+                lvl = int(float(kw.get("light", 0)))
+            except ValueError:
+                doc.err(ln, "light must be a whole number 0-15",
+                        "material lamp glowstone color=#FFD9A0 light=14")
+                lvl = 0
+            if lvl < 0 or lvl > 15:
+                doc.err(ln, f"light={lvl} is outside 0-15",
+                        "0 emits nothing, 15 is the brightest block in the game")
+                lvl = max(0, min(15, lvl))
             doc.materials[alias] = {
                 "id": next_mat, "texture": texture,
                 "color": kw.get("color", "#9AA0A8"),
+                "light": lvl,
             }
             next_mat += 1
             continue
@@ -544,6 +563,108 @@ def parse(text):
 
 
 # ---------------------------------------------------------------- validation
+# ---------------------------------------------------------------------------
+# LIGHT
+#
+# One cell is one STRATA block is one metre, and light runs on the voxel
+# scale the game already uses: 0-15, losing one level per block travelled.
+# So a level 14 lamp reaches 14 blocks into open air, and "is there enough
+# light here" is a question with a numeric answer rather than a look.
+#
+# Occlusion is not a new table: a form already declares its fluid mode and
+# its mass in the Core 12 contract, and those say how much of a cell is
+# actually filled. A column or a thin plate lets light past; a cube does not.
+# ---------------------------------------------------------------------------
+LIGHT_MAX = 15
+DARK_THRESHOLD = 7          # at or below this, a standable cell reads as dark
+
+
+def _blocks_light(cell):
+    """True when a filled cell stops light rather than letting it through."""
+    if cell is None:
+        return False
+    spec = FORMS[cell.form] if 0 <= cell.form < len(FORMS) else None
+    if spec is None:
+        return True
+    if spec[4] == "PASS":           # grates, bars, anything declared open
+        return False
+    return spec[7] >= 0.5           # mass: a half-filled cell or more is opaque
+
+
+def propagate_light(doc):
+    """Flood light out from every emitting cell.
+
+    Returns {(x, y, z): level} covering emitters and the air around them.
+    Air cells are not in doc.cells - the grid is sparse - so the result is
+    the only place an empty cell's light level exists.
+    """
+    mat_light = {m["id"]: int(m.get("light", 0) or 0) for m in doc.materials.values()}
+    sx, sy, sz = doc.size
+    grid, queue = {}, []
+
+    for (x, y, z), cell in doc.cells.items():
+        lvl = mat_light.get(cell.mat, 0)
+        cell.light = lvl                       # the cell's own emission
+        if lvl > 0:
+            grid[(x, y, z)] = lvl
+            queue.append((x, y, z, lvl))
+
+    # Breadth-first, brightest first, so a cell is never revisited downward.
+    queue.sort(key=lambda q: -q[3])
+    head = 0
+    while head < len(queue):
+        x, y, z, lvl = queue[head]
+        head += 1
+        if lvl <= 1 or grid.get((x, y, z), 0) > lvl:
+            continue
+        for dx, dy, dz in ((1, 0, 0), (-1, 0, 0), (0, 1, 0),
+                           (0, -1, 0), (0, 0, 1), (0, 0, -1)):
+            nx, ny, nz = x + dx, y + dy, z + dz
+            if not (0 <= nx < sx and 0 <= ny < sy and 0 <= nz < sz):
+                continue
+            nxt = lvl - 1
+            if nxt <= grid.get((nx, ny, nz), 0):
+                continue
+            if _blocks_light(doc.cells.get((nx, ny, nz))):
+                continue               # lights the face, not the far side
+            grid[(nx, ny, nz)] = nxt
+            queue.append((nx, ny, nz, nxt))
+    return grid
+
+
+def light_survey(doc, grid=None):
+    """Where a player could stand, and whether they could see.
+
+    A standable cell is empty, has something solid under it and headroom
+    above - the places that actually matter for whether a build is lit.
+    """
+    if grid is None:
+        grid = propagate_light(doc)
+    sx, sy, sz = doc.size
+    emitters = [(p, c.light) for p, c in doc.cells.items() if c.light > 0]
+    standable, dark, darkest = 0, 0, LIGHT_MAX
+    for (x, y, z), cell in list(doc.cells.items()):
+        above, head = (x, y + 1, z), (x, y + 2, z)
+        if y + 1 >= sy or above in doc.cells or not _blocks_light(cell):
+            continue
+        if head in doc.cells and _blocks_light(doc.cells.get(head)):
+            continue
+        standable += 1
+        lvl = grid.get(above, 0)
+        if lvl <= DARK_THRESHOLD:
+            dark += 1
+            darkest = min(darkest, lvl)
+    return {
+        "emitters": len(emitters),
+        "brightest": max([l for _, l in emitters], default=0),
+        "lit_cells": len(grid),
+        "standable": standable,
+        "dark_standable": dark,
+        "darkest": 0 if dark == 0 else darkest,
+        "threshold": DARK_THRESHOLD,
+    }
+
+
 def validate(doc, allowed_forms=None):
     """Everything that can be checked without running the game."""
     out = []
@@ -685,6 +806,23 @@ def report(doc, allowed_forms=None):
             if fix:
                 L.append(f"          FIX: {fix}")
         L.append("")
+    # Light, in the report, because "is this lit" is a question with a number
+    # for an answer and the AI cannot see the render.
+    sur = light_survey(doc)
+    L.append("LIGHT")
+    if not sur["emitters"]:
+        L.append("  no emitting material - every standable cell is at level 0")
+        L.append(f"  add one, e.g.  material lamp glowstone color=#FFD9A0 light=14")
+    else:
+        L.append(f"  {sur['emitters']} emitter(s), brightest level {sur['brightest']}")
+        L.append(f"  {sur['lit_cells']} cell(s) receive light")
+        if sur["standable"]:
+            pct = 100.0 * sur["dark_standable"] / sur["standable"]
+            L.append(f"  {sur['dark_standable']} of {sur['standable']} standable cells "
+                     f"at or below level {sur['threshold']} ({pct:.0f}% dark)")
+            if sur["dark_standable"]:
+                L.append(f"  darkest standable cell is level {sur['darkest']}")
+    L.append("")
     L.append("CHECKS")
     for sev, msg, fix in issues:
         L.append(f"  [{sev.upper():5s}] {msg}")

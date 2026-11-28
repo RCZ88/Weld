@@ -1281,3 +1281,405 @@ wildcard, `folder:PATH` takes a whole subtree and `track:structure` a whole
 track. COPY JSON-PICK PROMPT hands the AI the shape *and your real asset names*,
 so it cannot invent one. It sits with the set-once prompts, not beside the
 per-asset prompt.
+
+## Round 18 — one door to create, and animation that is no longer a label
+
+**CREATE replaces three modals.** There were only ever two questions — *do I
+have the AI's answer yet?* and *one or many?* — but they were spread across
+START NEW ASSET (one, brief-first), BATCH (many) and INTAKE (paste output).
+"I already have the output" was reachable only from an open asset's response
+box, so turning five finished documents into five assets meant creating a
+throwaway asset first. Both questions are now toggles on one modal behind the
+`+` button, and all four combinations work. Paste source while DESCRIBE is
+selected and it switches for you instead of creating one asset per line of
+code. INTAKE keeps only its distinct job: adding versions to the open asset.
+
+**The scrubber was a gimmick and now is not.** `designbridge.py` has always
+compiled real keyframe animation and exported proper glTF channels — but the
+viewport was never sent the keys, `animDuration` sat hardcoded at `0.5`, and
+nothing read `animTime`. The payload now carries the clips; the per-bone groups
+(which already had `parent` and `pivot`) are parented into a real rig, geometry
+re-pivoted so a bone turns about its own joint and carries its children. The
+clip name became a dropdown, the duration is the clip's own, and dragging the
+scrubber poses the rig. Rotation is XYZ Euler degrees — the same convention
+`_euler_quat` writes — so what you scrub is what the GLB ships.
+
+**ANIMATE THIS REVISION.** Asking for geometry and clips in one answer makes the
+model re-emit every box to add a wave: expensive, and it routinely damages a
+mesh that was already approved. This asks for `animation` blocks *only*, handing
+the AI the real bone names, parents and pivots, and merges what comes back into
+the revision you already have. A clip name sent again replaces that clip; the
+ones you leave out are kept. Tolerant of fenced blocks and chatter around them.
+
+**Clip lists come from the brief.** A description ending `Animations: idle, run,
+lunge_attack, hit, death` already said what it wants, so the clip field is
+seeded from it — backticks, bullets and the trailing full stop included. The
+line is matched mid-paragraph, which is where models actually put it.
+
+**`window.__studio`** is a small read-only view of the running viewport — clips,
+duration, the bone tree with live rotations, and `seek(t)`. For debugging a rig
+from the browser console.
+
+## Round 19 — setup in groups, region palettes, clips in the prompt
+
+**The setup panel was a wall and is now four lines.** Eight unrelated cards sat
+in one flat scroll — the AI briefing directly above the colour palette directly
+above the block allow-list — so finding anything meant reading all of it. The
+cards were fine; what was missing was any statement of what each one governs.
+They are now collected by exactly that, and collapse:
+
+| group | governs | cards |
+|---|---|---|
+| THE AI | set once per chat | SET UP THE AI |
+| ART DIRECTION | the whole project | REGION PALETTES, STYLE LOCK, STYLE SPEC, SHAPE CONTROLS |
+| THIS ASSET | switchable per asset | TRACK, BLOCKS ALLOWED |
+| LIBRARY & BULK | reusable parts, picking by name | REUSE LIBRARY, PICK BY JSON |
+
+Grouping moves the existing cards at runtime rather than rewriting the markup,
+so every control keeps its id, its listeners and its render function. A group
+whose cards are all hidden for the current track hides itself. Open/closed is
+remembered.
+
+**REGION PALETTES.** A project is not one palette — the briefs name regions
+(Overgrown Shelf, Ashen Foundry Basin), each with its own colours off the same
+locked style. A region is a named style text; the active one is layered onto the
+Style Lock, so it overrides without restating the whole style. Regions are
+workspace-wide, like the lock they branch off.
+
+The point of it: a brief that says ``oxidized_copper`` (`#4E7D70`) is naming a
+palette entry, but the grammar only accepts hex, so the model had to carry the
+mapping in prose and drifted a shade at a time. Named colours now reach the
+prompt as an explicit table:
+
+```
+THE PALETTE - these names are how the brief refers to each colour.
+Write the HEX in `color=`; the grammar does not accept the names.
+  shadow           #22252A
+  oxidized_copper  #4E7D70
+Use no colour outside this list.
+```
+
+The name is read as the identifier immediately before the hex, with any
+punctuation between, so `` `shadow` (`#22252A`) ``, `shadow: #22252A` and
+`shadow = #22252A` all parse — and a bare list of hexes yields no names rather
+than nonsense ones. All twelve entries from the mob briefs were verified.
+
+**ANIM, beside the other prompt options.** Asks for clips in the same answer as
+the geometry, for a new asset that has no approved mesh yet. Clip names come
+from the brief; keys and clips are capped by complexity (level 1: 2 clips of 3
+keys; level 3: 5 of 5) because asking for a key per frame is the commonest
+animation mistake. Only the model track gets it. For a mesh already approved,
+ANIMATE THIS REVISION remains the cheaper path — it does not re-send the boxes.
+
+**askText takes multiline.** A region body is many lines and a name is one; same
+dialog either way, so there is still only one way to be asked for text.
+
+## Round 20 — one PROMPTS panel, and a guide for writing briefs
+
+**The prompts were in five places.** The briefing and self-check in SETUP, PICK
+BY JSON in another SETUP group, BULK RENAME inside the rename modal, the asset
+prompt in BUILD step 2, and the clips prompt inside the animate modal. "Where is
+the prompt?" was the correct reaction. There is now a **PROMPTS** tab listing all
+seven in the order you use them, each marked SET ONCE or PER ASSET, each with
+COPY and READ (expands in place, so you can check a prompt without pasting it
+somewhere to look at it). The two that depend on what is open — the asset prompt
+and the clips prompt — are listed with TAKE ME THERE rather than copied blind,
+because a clips prompt has to know the rig.
+
+**COPY BOTH SETUP PROMPTS** puts the briefing and the brief guide on the
+clipboard as one paste, in order, for the top of a new AI chat.
+
+**HOW TO WRITE BRIEFS is new** — the guide that was missing. Silhouette first,
+one scale number, masses and the joints they turn about, materials by palette
+name (never hex in a brief), one readable detail, facing, and the `Animations:`
+line last. Plus what to leave out (lore, counts you don't mean, two assets in one
+brief), the shape budget to write against, the one-per-line batch form, and the
+note that briefs are unnecessary if the documents already exist. Everything in it
+is behaviour the Studio actually parses, so it stays in step with the app.
+
+**Bug found while writing it:** the briefing still said "THE THREE KINDS OF
+ASSET" and never mentioned `structure`, months after the building track shipped —
+so any AI set up with it had no idea the track existed, and was never told that
+a prop document starts with `design` rather than `prop`. Both fixed.
+
+## Round 21 — the prompts now have a way back
+
+**A prompt you send out has an answer that comes back, and half of them had
+nowhere to put it.** PROMPTS listed every prompt and let you copy it, then
+dead-ended: you copied PICK BY JSON, got JSON from the AI, and the box that
+accepts it was a button on a card inside the LIBRARY & BULK group in SETUP —
+collapsed by default. There was no way to get from the prompt to its own reply.
+
+Every prompt with a return path now carries a green paste button beside COPY,
+named for what it takes:
+
+| prompt | → | takes you to |
+|---|---|---|
+| HOW TO WRITE BRIEFS | PASTE THE BRIEFS | CREATE, in describe + batch |
+| THE ASSET PROMPT | PASTE THE DOCUMENT | BUILD, focused on the response box |
+| ANIMATE THIS REVISION | PASTE THE CLIPS | the animate modal |
+| PICK BY JSON | PASTE THE JSON | the JSON pick box |
+| BULK RENAME JSON | PASTE THE JSON | the rename box |
+
+THE BRIEFING and SELF-CHECK SETUP have no button, because nothing comes back
+from them.
+
+LIBRARY & BULK also opens by default now, so the card is not hidden either way.
+An existing install keeps whatever you last left open — the setting is yours,
+not a default — so the PROMPTS door is the reliable one.
+
+Also removed a wasted request: THE BRIEFING was fetching the brief guide and
+throwing the result away before fetching the briefing.
+
+## Round 22 — lighting
+
+**Default is unchanged on purpose.** Studio lighting shows an asset as clearly
+as possible in its own colours, with no light physics. That is the right mode
+for designing a shape, and it stays the default.
+
+**LIT mode** (toolbar, or `L`) answers a different question — will this build be
+lit in the game — and that has a numeric answer a renderer alone cannot give.
+So it does both: real GPU point lights at the emitters for the look, and the
+compiler's propagated 0–15 grid written into vertex colours for the truth. A
+cell at level 0 renders black however close a point light happens to be, so what
+you see is what the engine will compute. Turning it off restores the flat
+colours exactly.
+
+**The light model is the game's, not the renderer's.** One cell is one block is
+one metre is 16 voxels. Light runs 0–15 and loses exactly one level per block —
+no inverse-square, no colour bleed — so `light=14` means "lights 14 blocks of
+open air". Occlusion needs no new table: a form already declares its fluid mode
+and its mass in the Core 12 contract, so a grate passes light, a quarter plate
+passes light, and anything half-filled or more stops it. Light does not bend
+around corners, which is why an interior needs an emitter inside it.
+
+    material lamp glowstone color=#FFD9A0 light=14
+
+`light=` is new on `material`, defaults to 0, and is range-checked. It is packed
+into **bits 51–54** of the cell record — free bits above `crackStage`, 4 bits for
+the same 0–15 scale — so the engine reads a cell's emission with no side table
+and the locked Core 12 layout in bits 0–50 is untouched.
+
+**"Is it lit enough" is now a measurement.** A standable cell — empty, solid
+below, headroom above — at or below level 7 counts as dark, and both the compiler
+report and the LIT HUD state it:
+
+    1 emitter(s), brightest level 14
+    484 cell(s) receive light
+    40 of 121 standable cells at or below level 7 (33% dark)
+    darkest standable cell is level 4
+
+**LIGHTING & UNITS** is a new prompt in the shelf: the real measurements, the
+0–15 scale, what blocks light, and how to choose a brightness from the distance
+you want covered (with a table from `light=15` down to `light=4`). It also says
+plainly what not to write — no lightmaps, no lumens, no falloff curves.
+
+### Round 22 addendum — you can see what is inside a folder
+
+**Nesting was a 10px margin and nothing else**, so an asset inside a folder
+looked identical to one outside it. Depth is now structural: the children of an
+open folder live in a container with a guide rail down its left edge, each level
+adding 21px, and a nested card draws a short elbow to the rail it belongs to. A
+root asset sits at x=1; one three folders deep sits at x=64, with a rail per
+level. The indent lives in the page's own stylesheet rather than in utility
+classes, because the whole point of the change is that it must be visible.
+
+**Finding something now shows you where it is.** `revealAsset` opens every
+collapsed folder above an asset, scrolls it into view if it was off screen, and
+flashes its outline. Opening an asset reveals it; a search hit always flashes,
+even when it was already the open asset, because being shown the location was
+the point of searching. Verified against an asset three levels down with its
+grandparent collapsed.
+
+## Round 23 — a texture is not always a block
+
+Three findings before any of this was built, all measured rather than assumed:
+
+- **A texture could only ever be a block face.** The only place anything bound a
+  texture was the structure track's `material <alias> <texture>`.
+- **The model and prop grammars have no texture binding at all.** Model
+  statements are `model / bone / box / animation / key`; prop statements are
+  `design` plus profiles and sweeps. Both carry `color=#hex` and nothing else.
+- **No UVs are exported.** No `TEXCOORD`, no `baseColorTexture`, no
+  `KHR_materials` anywhere in the exporter. So even a bound texture had nothing
+  to map with. The viewport sampled a texture image in exactly one place: the
+  texture track's own flat preview plane.
+
+So it is built in three layers, none of which touch `designbridge.py`.
+
+**Layer 1 — THIS TEXTURE IS FOR.** A texture declares its target, and the target
+decides what *correct* means. A block face must tile in both axes; a prop wrap
+tiles around the axis (or along the sweep) and is free in the other; a model
+panel never repeats. This has teeth because of what `GRAMMAR_NOTES.md` measured:
+`noise`, `veins`, `bevel`, `outline` and `border` do **not** wrap across a tile
+edge, while `brick` does. So those layers are bugs on a block and exactly right
+on a model panel — and the prompt now says which, per target.
+
+**Layer 2 — MATERIAL SLOTS, keyed on colour.** This is the answer to "which part
+of a model?". Every box and solid already carries `color=#hex`, and the region
+palette already names it, so **the colour is the material slot**. A model has
+many boxes but few distinct colours; a prop is one solid with one to three; a
+structure already worked this way with its `material` aliases. Bind a texture to
+a colour and every part made of that stuff is textured — no new grammar, no slot
+per box. The prompt lists the slots and which already carry a texture.
+
+**Layer 3 — seeing it, without touching the compiler.** There are no UVs, so the
+viewport generates them: per triangle, the dominant axis picks the projection
+plane and the other two world coordinates become u and v, one tile per block —
+16 voxels on a model, one cell on a structure. Exact for axis-aligned voxel
+faces, a reasonable projection on a swept solid.
+
+A bone turned out to be the wrong unit for this: one bone can hold boxes of
+several colours, and the payload's bone groups carry no colour at all. So
+triangles are bucketed by their own vertex colour and the mesh gets one geometry
+group and material per bucket. Unbinding restores the flat mesh exactly.
+
+The binding ships as `materials.json` beside the geometry in every export, since
+it can live neither in the document nor in a UV-less GLB.
+
+## Round 24 — the building section gets its controls
+
+The structure track had the data and almost none of the controls, and one of
+them was a real bug rather than a missing feature.
+
+**The texture name was being thrown away.** `material wall soot_iron_plate
+color=#3A3F45` names a texture, the compiler parses it — and the mesh payload
+dropped it. So the viewport could only ever show the colour, and a building with
+every texture declared still rendered as flat paint with nothing saying so. The
+payload now carries each material's texture, its light level and its cell count,
+and the server resolves every declared texture against the workspace so the UI
+can distinguish three states that used to look identical:
+
+    wall   361  textured · soot_iron_plate
+    floor  169  MISSING: foundry_grate          <- names a texture that does not exist
+    lamp     1  colour only — no texture named
+
+**BUILD panel**, on the viewport rather than buried in a settings tab:
+
+- **Blocks used** — every form with its count, from the compiled build.
+- **Materials** — colour swatch, cell count, texture state, and the light level
+  of any emitter.
+- **EXTERIOR / INTERIOR** plus a **CUT** slider. Cutting drops every triangle
+  above the level rather than using a clip plane, so the interior reads as solid
+  geometry from any angle instead of as a hollow shell. INTERIOR opens it at
+  roughly head height.
+- **LIGHT ON/OFF** and **LEVELS**, which paints the propagated 0–15 light level
+  straight onto the geometry — dark blue at 0 through pale yellow at 15 — so
+  "where is it dark" is something you look at rather than infer.
+
+A structure's textures come from its own document, so they are applied from the
+`material` lines with one tile per cell; the model/prop slot pass is skipped for
+structures entirely, since it would strip them.
+
+**Bug found while testing:** `loadSlotTexture` returned nothing on a cache hit,
+so the second application of any texture set `material.map` to `undefined`. Every
+re-render — a cut, a light toggle — silently stripped all textures. Returning the
+cached texture fixes it.
+
+## Round 25 — the model is asked what it wants to build with
+
+The app used to pick the block list and simply hand it over, so the model had no
+say in what it was given and no reason to think about it. That is how a building
+ends up naming four textures that are not in the workspace — the one that was
+rendering as flat paint in round 24.
+
+**PLAN THE BLOCKS** is a round trip that happens before any geometry:
+
+1. **The ask** names all twelve forms with the facts that decide whether you want
+   one — valid orientations, support rule, how much of a cell it fills, and
+   whether light passes — read out of the form table rather than from memory:
+
+       cube           1 orientations   STD       fills 1.0   blocks light   - the default solid block
+       stair         12 orientations   STD       fills 0.75  blocks light   - a step - the only form that climbs
+       column         6 orientations   COLUMN    fills 0.46  light passes   - a central post - load bearing
+
+   It also lists the textures that actually exist, the region palette as a
+   name → hex table, the brief, and the json shape to answer in. It opens with
+   *"do not write the building yet"*.
+
+2. **The answer is locked in.** The forms become the project's form allow-list
+   (which the compiler already enforces) and the materials are stored. Anything
+   outside the twelve is dropped and named; any texture that does not exist is
+   reported so you can make it before building rather than discovering flat paint
+   afterwards.
+
+3. **Every build prompt states it back**, which is what makes "use these blocks"
+   true rather than hopeful:
+
+       THE BLOCK PLAN YOU AGREED - build with exactly this
+         forms: cube, slab_half, stair, girder
+         material wall soot_iron_plate color=#22252A
+         material lamp glowstone color=#FFD9A0 light=14
+         material pipe copper_pipe_wrap color=#4E7D70   <- NOT IN THE WORKSPACE YET
+         Declare these material lines verbatim at the top of the document.
+         Do not rename an alias, add a material or use a form outside the list.
+
+It is step 5 in PROMPTS, with the same COPY / PASTE THE PLAN pair as every other
+prompt that has an answer coming back. The reader is tolerant of a fenced block
+with chatter either side.
+
+## Round 26 — projects, at last
+
+This was outstanding for many rounds and it is the thing the rest depended on.
+
+**A project is a top-level folder treated as a repository.** Every asset under
+its root belongs to it. The `projects` table in the database is assets and
+predates this, so the container is `workspaces` internally and "project"
+everywhere a person reads it.
+
+**The selector is in the top bar, beside the brand** — where IntelliJ and PyCharm
+put it — not crammed into a sidebar card. It shows which project you are in and
+how many assets it holds. Clicking it switches project, creates one from a
+folder, renames, forgets (the folder and its contents are untouched), or opens
+the history.
+
+**The tree is scoped to the project you are in**, the way an IDE shows one
+project's files: everything under its root and nothing else. Measured: 46 cards
+across the whole workspace, 2 in `Foundry Era`. "All projects" restores the full
+tree, which is what the sidebar always used to do.
+
+**PROJECT HISTORY is the whole repository, not one asset.** Every revision so far
+was only visible from inside the asset that owned it, so there was no way to ask
+what the project gained this week. The feed is one line per revision across every
+asset under the root, newest first, grouped by day, marked ADDED or REVISED, and
+clicking a line opens that asset:
+
+    2026-11-27 · 1
+      ADDED  soot_wall_panel        v1  PASS   Starter auto — brief: a dented steel barrel
+    2026-11-26 · 1
+      ADDED  foundry_valve_cluster  v1  PASS   Oxidised iron plate with amber pitting
+
+It opens as its own overlay rather than another panel in a side rail.
+
+## Round 27 — scoped locks, and batches that stay together
+
+**A style lock now has a SCOPE.** It was one global string, so a workspace
+holding two art directions could only ever have one of them. The card gained a
+selector — **ALL / THIS PROJECT / THIS FOLDER** — with a dot on each scope that
+already holds a lock, and a line saying which ones reach the open asset:
+
+    Sent with this asset: every project + project Foundry Era
+
+Locks that cover an asset layer general to specific, the same inheritance the
+region palettes use, so a project adds to the house style without restating it.
+A `dir:ZD/inner` lock correctly does not reach an asset sitting in `ZD`. The ALL
+scope is still the old global setting, so an existing workspace keeps working.
+
+**A batch stays together.** Everything pasted in one go used to scatter into
+whatever folder happened to be selected, mixed in with work from days ago. CREATE
+now offers *"Keep this batch together in its own dated folder"* (on by default,
+and only shown in BATCH mode), which puts the import in
+`<chosen folder>/batch_2026-11-28_2141_mob-pack` and tags every asset with the
+group, so the import is a thing you can point at afterwards.
+
+**And the prompts come back in one copy.** A batch of briefs left you with N
+assets each needing its own prompt, fetched by clicking through the list — the
+slow part of the whole flow, and the thing that was missing. After a brief batch
+the Studio offers to copy all of them at once, each under a header naming its
+asset:
+
+    ======================================================================
+    ASSET 2 OF 3:  grp_two   [model]
+    ======================================================================
+
+Measured: three briefs in, three prompts out, 37,010 characters in one clipboard.

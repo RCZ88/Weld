@@ -240,6 +240,33 @@
   }
   .animate-bus { animation: bus-activity 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
 
+  /* The guide rail and the elbow that say an asset sits inside a folder.
+     A 10px margin was not a signal anyone could see. */
+  .tree-branch {
+    position: relative;
+    margin-left: 7px;
+    padding-left: 13px;
+    border-left: 1px solid rgba(255, 255, 255, .11);
+  }
+  .tree-branch:hover { border-left-color: rgba(255, 255, 255, .22); }
+  .nested-card::before {
+    content: ''; position: absolute; left: -12px; top: 50%;
+    width: 9px; height: 1px; background: rgba(255,255,255,.17);
+  }
+  .tree-branch > .tree-folder[data-depth]::before {
+    content: ''; position: absolute; left: -12px; top: 50%;
+    width: 9px; height: 1px; background: rgba(255,255,255,.17);
+  }
+  .tree-branch > .tree-folder { position: relative; }
+  .tree-branch:hover > .tree-folder::before,
+  .proj-card.nested-card:hover::before { background: rgba(255,255,255,.34); }
+  /* The row the search or a jump landed on. */
+  @keyframes revealFlash {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); }
+    18%      { box-shadow: 0 0 0 2px rgba(52,211,153,.85); }
+    70%      { box-shadow: 0 0 0 2px rgba(52,211,153,.5); }
+  }
+  .reveal-flash { animation: revealFlash 1.5s ease-out; }
   @keyframes busySweep {
     0%   { transform: translateX(-100%); }
     100% { transform: translateX(400%); }
@@ -384,6 +411,11 @@
       <span class="font-mono text-[9px] font-semibold px-2 py-0.5 rounded-full bg-white/[0.08] text-zinc-300 border border-white/15">CAD·OS</span>
       <span class="font-mono text-[8.5px] font-semibold px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-400 border border-white/10 cursor-pointer hover:text-white transition-colors" id="engine-status-pill" title="Storage engine status — click for Studio settings">CONNECTING…</span>
     </div>
+    <button class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.07] hover:bg-white/[0.14] border border-white/10 font-mono text-[10px] font-medium text-zinc-200 hover:text-white tactile-btn" id="top-project-btn" title="Which project you are in — switch, create, or see its history">
+      <span class="material-symbols-outlined text-[13px] text-zinc-400">folder_special</span>
+      <span id="top-project-label">All projects</span>
+      <span class="text-zinc-500" id="top-project-count"></span>
+    </button>
     <button class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/[0.05] hover:bg-white/[0.1] border border-white/10 font-mono text-[10px] font-medium text-zinc-300 hover:text-white tactile-btn" id="top-branch-map-btn" title="Open branch map (B)">
       <span class="material-symbols-outlined text-[13px] text-zinc-400">account_tree</span>
       <span id="top-branch-label">main</span>
@@ -598,6 +630,7 @@
     <!-- Tab rail -->
     <div class="flex items-center gap-1 p-0.5 rounded-full recessed-well mt-3">
       <button class="right-tab-btn flex-1 py-1 px-1.5 rounded-full font-mono text-[9px] font-semibold bg-white/15 text-white border border-white/20 tactile-btn" data-tab="workbench">BUILD</button>
+      <button class="right-tab-btn flex-1 py-1 px-1.5 rounded-full font-mono text-[9px] font-medium text-zinc-400 hover:text-zinc-200 tactile-btn" data-tab="prompts">PROMPTS</button>
       <button class="right-tab-btn flex-1 py-1 px-1.5 rounded-full font-mono text-[9px] font-medium text-zinc-400 hover:text-zinc-200 tactile-btn" data-tab="setup">SETUP</button>
       <button class="right-tab-btn flex-1 py-1 px-1.5 rounded-full font-mono text-[9px] font-medium text-zinc-400 hover:text-zinc-200 tactile-btn" data-tab="dsl">SOURCE</button>
       <button class="right-tab-btn flex-1 py-1 px-1.5 rounded-full font-mono text-[9px] font-medium text-zinc-400 hover:text-zinc-200 tactile-btn" data-tab="report">REPORT</button>
@@ -834,6 +867,9 @@
               <label class="flex items-center gap-1 cursor-pointer text-zinc-400 hover:text-white" title="The system briefing — what the pipeline is and what comes out of it. Untick once you have pasted it into this chat from SETUP.">
                 <input checked="" class="rounded focus:ring-0 w-3 h-3" id="ctx-system" type="checkbox"/><span>BRIEF</span>
               </label>
+              <label class="flex items-center gap-1 cursor-pointer text-zinc-400 hover:text-white" id="ctx-clips-wrap" title="Ask for keyframe clips in the same answer as the geometry. For an approved mesh, use ANIMATE THIS REVISION instead — it does not re-send the boxes.">
+                <input class="rounded focus:ring-0 w-3 h-3" id="ctx-clips" type="checkbox"/><span>ANIM</span>
+              </label>
               <label class="flex items-center gap-1 cursor-pointer text-zinc-400 hover:text-white" title="The compiler report for the current revision — untick when the AI already saw it">
                 <input checked="" class="rounded focus:ring-0 w-3 h-3" id="ctx-include-report" type="checkbox"/><span>RPT</span>
               </label>
@@ -887,6 +923,12 @@
             <span class="material-symbols-outlined text-[16px]">play_circle</span>
             <span>COMPILE &amp; REGEN VOXEL</span>
           </button>
+          <!-- Animation rides on an approved mesh rather than being asked for
+               alongside it, so the geometry is never re-emitted. -->
+          <button class="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-full bg-white/[0.07] hover:bg-white/[0.16] border border-white/[0.08] font-mono text-[9px] font-semibold text-zinc-200 hover:text-white tactile-btn" id="open-animate-btn" title="Ask for clips only — the approved geometry is reused as-is">
+            <span class="material-symbols-outlined text-[12px]">animation</span>
+            <span>ANIMATE THIS REVISION</span>
+          </button>
         </div>
         </section>
 
@@ -918,6 +960,44 @@
          SETUP — the things you set once and leave alone. They were sitting
          on top of the loop, which is why the panel read as a wall.
          ================================================================= -->
+    <!-- =================================================================
+         PROMPTS — every prompt in one place.
+         They used to be scattered: the briefing and self-check in SETUP,
+         JSON-PICK in another group, bulk rename inside the rename modal,
+         the asset prompt in BUILD step 2 and the clips prompt inside the
+         animate modal. Five places, so the honest reaction was "where is
+         the prompt?". This panel lists all of them, says which are set
+         once and which are rebuilt per asset, and points at the ones that
+         live elsewhere because they depend on what is open.
+         ================================================================= -->
+    <div class="right-tab-panel hidden flex-1 flex-col min-h-0" data-panel="prompts">
+      <div class="pt-3 pb-2.5 border-b border-white/[0.08]">
+        <div class="flex items-center gap-2">
+          <span class="material-symbols-outlined text-[15px] text-zinc-300">forum</span>
+          <span class="font-mono text-[11px] font-bold text-white">PROMPTS</span>
+        </div>
+        <p class="font-mono text-[8.5px] text-zinc-400 leading-snug mt-1">
+          Everything you paste into an AI. Start at the top: the first two set it up
+          for this whole chat, then the per-asset prompt is the one you send each round.
+        </p>
+      </div>
+      <div class="flex-1 overflow-y-auto py-3 pr-1 min-h-0 space-y-3">
+        <div class="p-3 rounded-2xl bg-emerald-400/[0.07] border border-emerald-400/25 flex flex-col gap-2">
+          <div class="font-mono text-[9.5px] font-bold text-emerald-200 uppercase tracking-wide">START HERE — ONCE PER CHAT</div>
+          <p class="font-mono text-[8.5px] text-zinc-300 leading-snug">
+            Paste these two at the top of a new AI chat, in this order. After that the AI
+            knows what the pipeline is and how to write a brief, and every later prompt
+            can be shorter.
+          </p>
+          <button class="w-full flex items-center justify-center gap-1.5 py-2 rounded-full bg-emerald-400/90 hover:bg-emerald-300 font-mono text-[9.5px] font-bold text-black tactile-btn" id="copy-setup-pair-btn">
+            <span class="material-symbols-outlined text-[13px]">content_copy</span>
+            <span>COPY BOTH SETUP PROMPTS</span>
+          </button>
+        </div>
+        <div class="flex flex-col gap-2" id="prompt-shelf"></div>
+      </div>
+    </div>
+
     <div class="right-tab-panel hidden flex-1 flex-col min-h-0" data-panel="setup">
       <div class="pt-3 pb-2.5 border-b border-white/[0.08]">
         <div class="flex items-center gap-2">
@@ -929,9 +1009,9 @@
           don't repeat yourself each round.
         </p>
       </div>
-      <div class="flex-1 overflow-y-auto space-y-3 py-3 pr-1 min-h-0">
+      <div class="flex-1 overflow-y-auto space-y-2 py-3 pr-1 min-h-0" id="setup-scroll">
         <!-- SET UP THE AI — paste-once prompts, nothing to do with this asset -->
-        <div class="p-3.5 glass-card-item rounded-2xl flex flex-col gap-2.5">
+        <div class="p-3.5 glass-card-item rounded-2xl flex flex-col gap-2.5" id="agent-card">
           <div class="flex items-center gap-2 min-w-0">
             <span class="material-symbols-outlined text-[14px] text-zinc-300">smart_toy</span>
             <span class="font-mono text-[10px] font-semibold text-white uppercase tracking-wide">SET UP THE AI</span>
@@ -958,7 +1038,7 @@
         </div>
 
         <!-- PICK BY JSON — selection and export driven by a pasted list -->
-        <div class="p-3.5 glass-card-item rounded-2xl flex flex-col gap-2.5">
+        <div class="p-3.5 glass-card-item rounded-2xl flex flex-col gap-2.5" id="jsonpick-card">
           <div class="flex items-center gap-2 min-w-0">
             <span class="material-symbols-outlined text-[14px] text-zinc-300">data_object</span>
             <span class="font-mono text-[10px] font-semibold text-white uppercase tracking-wide">PICK BY JSON</span>
@@ -1047,6 +1127,65 @@
         </div>
 
         <!-- STYLE LOCK — standing art direction, sent with every prompt -->
+        <!-- PALETTE / REGION VARIANTS — branches off the project's locked style -->
+        <!-- TEXTURE IS FOR — a texture is not always a cube -->
+        <div class="p-3.5 glass-card-item rounded-2xl flex-col gap-2.5 hidden" id="texintent-card">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="material-symbols-outlined text-[14px] text-zinc-300">texture</span>
+            <span class="font-mono text-[10px] font-semibold text-white uppercase tracking-wide">THIS TEXTURE IS FOR</span>
+          </div>
+          <p class="font-mono text-[8.5px] text-zinc-400 leading-snug">
+            A cube face must tile in both axes. A prop wrap only tiles around the body.
+            A model panel never repeats, so a border or a motif is fine. The target
+            changes which layers are even legal, so it goes in the prompt.
+          </p>
+          <div class="flex items-center gap-1.5" id="texintent-row"></div>
+          <div class="hidden flex items-center gap-1.5" id="texintent-wrap-row">
+            <span class="font-mono text-[8.5px] text-zinc-500 uppercase">Repeats</span>
+            <button class="px-2 py-1 rounded-full font-mono text-[8.5px] font-semibold tactile-btn border" data-texwrap="around">AROUND THE AXIS</button>
+            <button class="px-2 py-1 rounded-full font-mono text-[8.5px] font-semibold tactile-btn border" data-texwrap="along">ALONG THE SWEEP</button>
+          </div>
+        </div>
+
+        <!-- MATERIAL SLOTS — the colour is the slot -->
+        <div class="p-3.5 glass-card-item rounded-2xl flex-col gap-2.5 hidden" id="slots-card">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="material-symbols-outlined text-[14px] text-zinc-300">layers</span>
+            <span class="font-mono text-[10px] font-semibold text-white uppercase tracking-wide">MATERIAL SLOTS</span>
+            <span class="font-mono text-[8px] text-zinc-500 truncate" id="slots-count"></span>
+          </div>
+          <p class="font-mono text-[8.5px] text-zinc-400 leading-snug">
+            Every box and solid already carries a colour, and the region palette names it —
+            so the colour <span class="text-zinc-300">is</span> the material slot. Bind a
+            texture to a colour and every part using it is textured, which is how
+            &ldquo;which part of the model&rdquo; gets an answer without a slot per box.
+          </p>
+          <div class="flex flex-col gap-1.5" id="slots-list"></div>
+        </div>
+
+        <div class="p-3.5 glass-card-item rounded-2xl flex flex-col gap-2.5" id="palette-card">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="material-symbols-outlined text-[14px] text-zinc-300">format_paint</span>
+            <span class="font-mono text-[10px] font-semibold text-white uppercase tracking-wide">REGION PALETTES</span>
+            <span class="font-mono text-[8px] text-zinc-500 truncate" id="palette-count">none</span>
+          </div>
+          <p class="font-mono text-[8.5px] text-zinc-400 leading-snug">
+            One project, several regions, each with its own palette off the same locked
+            style. The active one is layered onto the Style Lock, and every named colour
+            in it goes into the prompt as a <span class="text-zinc-300">name → hex</span>
+            table so the AI writes the right value instead of carrying it in prose.
+          </p>
+          <div class="flex flex-col gap-1.5" id="palette-list"></div>
+          <div class="flex items-center gap-1.5">
+            <button class="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-full bg-white/[0.07] hover:bg-white/[0.16] border border-white/[0.08] font-mono text-[9px] font-semibold text-zinc-200 hover:text-white tactile-btn" id="palette-new-btn">
+              <span class="material-symbols-outlined text-[12px]">add</span><span>NEW REGION</span>
+            </button>
+            <button class="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-full bg-white/[0.07] hover:bg-white/[0.16] border border-white/[0.08] font-mono text-[9px] font-semibold text-zinc-200 tactile-btn" id="palette-off-btn" title="Use the project lock on its own">
+              PROJECT ONLY
+            </button>
+          </div>
+        </div>
+
         <div class="p-3.5 glass-card-item rounded-2xl flex flex-col gap-2.5" id="lock-card">
           <div class="flex items-center justify-between gap-2">
             <div class="flex items-center gap-2 min-w-0">
@@ -1059,6 +1198,10 @@
             </label>
           </div>
 
+          <!-- Where this lock applies. One global string meant a workspace
+               with two art directions could only ever have one of them. -->
+          <div class="flex items-center gap-1 mb-1.5" id="lock-scope-row"></div>
+          <div class="font-mono text-[7.5px] text-zinc-500 mb-1 leading-snug" id="lock-applied"></div>
           <textarea id="lock-text" rows="3" spellcheck="false"
             class="w-full p-2.5 rounded-xl recessed-well font-mono text-[10.5px] leading-relaxed resize-y min-h-[52px]"
             placeholder="Art direction that must hold across the whole project. e.g.&#10;Palette: #2d323f base, #1e222b shadow, #ef4444 accent only.&#10;All mobs 16 wide max, flat-topped shoulders, no curves.&#10;Eyes always emissive and 2px tall."></textarea>
@@ -1341,6 +1484,57 @@
       <button class="cam-btn px-3 py-1 rounded-full font-mono text-[10px] font-medium tactile-btn" data-cam="side">SIDE</button>
       <button class="cam-btn px-3 py-1 rounded-full font-mono text-[10px] font-medium tactile-btn" data-cam="top">TOP</button>
       <div class="w-[1px] h-3.5 bg-white/15 mx-0.5"></div>
+      <div class="hidden absolute top-10 left-0 px-2.5 py-1 rounded-xl bg-black/70 border border-white/[0.09] backdrop-blur-sm" id="lit-hud"></div>
+
+      <!-- ===============================================================
+           BUILD INSPECTOR — the structure track's own controls, on the
+           viewport rather than buried in a settings panel: which blocks
+           and materials a build uses, whether each material is really
+           textured or just painted, cutting it open to see inside, and
+           the light.
+           =============================================================== -->
+      <div class="hidden absolute bottom-3 left-3 w-[268px] max-h-[78%] flex flex-col rounded-2xl bg-black/80 border border-white/[0.1] backdrop-blur-md shadow-2xl overflow-hidden" id="build-hud">
+        <button class="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/[0.05] tactile-btn" id="build-hud-toggle">
+          <span class="material-symbols-outlined text-[14px] text-zinc-300">domain</span>
+          <span class="font-mono text-[9.5px] font-bold text-white uppercase tracking-wider">BUILD</span>
+          <span class="font-mono text-[8px] text-zinc-500 truncate" id="build-hud-sum"></span>
+          <div class="flex-1"></div>
+          <span class="material-symbols-outlined text-[15px] text-zinc-500 transition-transform" id="build-hud-caret">expand_more</span>
+        </button>
+        <div class="px-3 pb-3 overflow-y-auto space-y-2.5" id="build-hud-body">
+
+          <div class="pt-1">
+            <div class="font-mono text-[8px] text-zinc-500 uppercase tracking-wider mb-1">View</div>
+            <div class="flex items-center gap-1.5 mb-1.5">
+              <button class="flex-1 py-1 rounded-full font-mono text-[8.5px] font-semibold border tactile-btn" data-buildview="outside">EXTERIOR</button>
+              <button class="flex-1 py-1 rounded-full font-mono text-[8.5px] font-semibold border tactile-btn" data-buildview="inside">INTERIOR</button>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="font-mono text-[8px] text-zinc-500 w-8 shrink-0">CUT</span>
+              <input class="flex-1 accent-white" id="build-cut" type="range" min="0" max="1" step="1" value="1"/>
+              <span class="font-mono text-[8px] text-zinc-400 w-12 text-right shrink-0" id="build-cut-label">all</span>
+            </div>
+            <div class="flex items-center gap-1.5 mt-1.5">
+              <button class="flex-1 py-1 rounded-full font-mono text-[8.5px] font-semibold border tactile-btn" id="build-lit-btn">LIGHT OFF</button>
+              <button class="flex-1 py-1 rounded-full font-mono text-[8.5px] font-semibold border tactile-btn" id="build-heat-btn">LEVELS</button>
+            </div>
+          </div>
+
+          <div>
+            <div class="font-mono text-[8px] text-zinc-500 uppercase tracking-wider mb-1">Blocks used</div>
+            <div class="flex flex-wrap gap-1" id="build-forms"></div>
+          </div>
+
+          <div>
+            <div class="font-mono text-[8px] text-zinc-500 uppercase tracking-wider mb-1">Materials</div>
+            <div class="flex flex-col gap-1" id="build-mats"></div>
+          </div>
+
+        </div>
+      </div>
+      <button class="w-7 h-7 rounded-full bg-white/[0.06] hover:bg-white/[0.14] border border-white/10 flex items-center justify-center text-zinc-400 hover:text-white tactile-btn" id="cam-lit" title="LIT — show the game's own light model instead of studio lighting (L)">
+        <span class="material-symbols-outlined text-[15px]">wb_incandescent</span>
+      </button>
       <button class="w-7 h-7 rounded-full bg-white/[0.06] hover:bg-white/[0.14] border border-white/10 flex items-center justify-center text-zinc-400 hover:text-white tactile-btn" id="cam-wireframe" title="Toggle wireframe (W)">
         <span class="material-symbols-outlined text-[15px]">grid_4x4</span>
       </button>
@@ -1361,8 +1555,9 @@
         <span class="material-symbols-outlined text-[17px]">pause</span>
       </button>
       <div class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-black/50 border border-white/[0.08] font-mono text-[10px] font-medium text-zinc-300 shadow-glass-well shrink-0">
-        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400" id="anim-dot"></span>
         <span id="anim-name-label">static</span>
+        <select class="hidden bg-transparent font-mono text-[10px] text-zinc-200 focus:outline-none cursor-pointer" id="anim-clip-select" title="Which clip to play"></select>
       </div>
       <div class="flex-1 flex items-center gap-2">
         <span class="font-mono text-[10px] font-medium text-zinc-300 shrink-0 w-10" id="scrubber-time">0.00s</span>
@@ -1687,6 +1882,7 @@
         <span class="hidden items-center pl-3 pr-0.5 font-mono text-xs text-zinc-500 shrink-0 select-none" id="ask-prefix"></span>
         <input class="flex-1 bg-transparent border-0 focus:ring-0 px-3 py-2.5 font-mono text-xs text-white placeholder-zinc-500 min-w-0" id="ask-input" type="text" spellcheck="false" autocomplete="off"/>
       </div>
+      <textarea class="hidden w-full mt-0 px-3 py-2.5 rounded-xl recessed-well font-mono text-[11px] leading-relaxed text-white placeholder-zinc-500 resize-y" id="ask-area" rows="9" spellcheck="false"></textarea>
       <p class="font-mono text-[8.5px] text-zinc-500 leading-snug mt-1" id="ask-help"></p>
     </div>
     <div class="flex items-center justify-end gap-2 pt-1">
@@ -1697,6 +1893,108 @@
 </div>
 
 <!-- Context menu — one component, different action sets per target -->
+<!-- ANIMATE THIS REVISION -->
+<div class="fixed inset-0 z-[120] hidden items-center justify-center bg-black/70 backdrop-blur-sm" id="animate-modal">
+  <div class="w-[680px] max-w-[94vw] max-h-[90vh] flex flex-col rounded-3xl bg-[#0d0f14] border border-white/[0.1] shadow-2xl overflow-hidden" style="animation:modalIn .16s ease-out">
+    <div class="px-5 pt-4 pb-3 border-b border-white/[0.08] flex items-center gap-2">
+      <span class="material-symbols-outlined text-[16px] text-zinc-300">animation</span>
+      <div class="min-w-0">
+        <div class="font-mono text-[11px] font-bold text-white">ANIMATE THIS REVISION</div>
+        <div class="font-mono text-[8.5px] text-zinc-400 truncate" id="animate-rig">&mdash;</div>
+      </div>
+      <button class="ml-auto p-1 rounded-lg hover:bg-white/10 tactile-btn" id="animate-close">
+        <span class="material-symbols-outlined text-[16px] text-zinc-400">close</span>
+      </button>
+    </div>
+    <div class="flex-1 overflow-y-auto px-5 py-4 space-y-3 min-h-0">
+      <p class="font-mono text-[8.5px] text-zinc-400 leading-snug">
+        The clips arrive on their own and are merged into the geometry you already approved,
+        so the model never re-sends the boxes. A clip name you send again replaces that clip;
+        the ones you leave out are kept.
+      </p>
+      <div>
+        <label class="font-mono text-[9.5px] text-zinc-400 uppercase block mb-1">Clips wanted</label>
+        <input class="w-full px-3 py-2 rounded-xl recessed-well font-mono text-[10.5px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-white/30" id="animate-clips" type="text" placeholder="idle, run, lunge_attack, hit, death"/>
+        <p class="font-mono text-[8px] text-zinc-500 mt-1" id="animate-clip-hint"></p>
+      </div>
+      <button class="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-full bg-white/[0.07] hover:bg-white/[0.16] border border-white/[0.08] font-mono text-[9px] font-semibold text-zinc-200 hover:text-white tactile-btn" id="animate-copy">
+        <span class="material-symbols-outlined text-[12px]">content_copy</span>
+        <span>COPY THE CLIPS-ONLY PROMPT</span>
+      </button>
+      <div>
+        <label class="font-mono text-[9.5px] text-zinc-400 uppercase block mb-1">Paste the clips back</label>
+        <textarea id="animate-input" spellcheck="false" rows="9"
+          class="w-full px-3 py-2.5 rounded-xl bg-black/50 border border-white/[0.1] font-mono text-[10px] text-zinc-100 resize-y focus:outline-none focus:border-white/30"
+          placeholder='animation "lunge_attack" loop=false&#10;  key arm_r t=0 rot=(0,0,0)&#10;  key arm_r t=0.25 rot=(-110,0,0)&#10;  key arm_r t=0.6 rot=(0,0,0)'></textarea>
+      </div>
+      <div id="animate-report" class="hidden rounded-xl border border-white/[0.09] bg-black/40 p-3 font-mono text-[9px] leading-relaxed"></div>
+    </div>
+    <div class="px-5 py-3 border-t border-white/[0.08] flex items-center gap-2">
+      <span class="font-mono text-[9px] text-zinc-500" id="animate-tally">no clips pasted</span>
+      <div class="flex-1"></div>
+      <button class="px-3 py-1.5 rounded-full bg-white/[0.07] hover:bg-white/[0.16] border border-white/[0.08] font-mono text-[9px] font-semibold text-zinc-200 tactile-btn" id="animate-cancel">CANCEL</button>
+      <button class="px-3.5 py-1.5 rounded-full bg-emerald-400/90 hover:bg-emerald-300 font-mono text-[9px] font-bold text-black tactile-btn" id="animate-apply">MERGE &amp; COMPILE</button>
+    </div>
+  </div>
+</div>
+
+<!-- PROJECT HISTORY — the whole repository, not one asset -->
+<div class="fixed inset-0 z-[120] hidden items-center justify-center bg-black/70 backdrop-blur-sm" id="prjhist-modal">
+  <div class="w-[760px] max-w-[95vw] max-h-[88vh] flex flex-col rounded-3xl bg-[#0d0f14] border border-white/[0.1] shadow-2xl overflow-hidden" style="animation:modalIn .16s ease-out">
+    <div class="px-5 pt-4 pb-3 border-b border-white/[0.08] flex items-center gap-2">
+      <span class="material-symbols-outlined text-[16px] text-zinc-300">history</span>
+      <div class="min-w-0">
+        <div class="font-mono text-[11px] font-bold text-white" id="prjhist-title">PROJECT HISTORY</div>
+        <div class="font-mono text-[8.5px] text-zinc-400 truncate" id="prjhist-sub">Every revision across the whole project</div>
+      </div>
+      <button class="ml-auto p-1 rounded-lg hover:bg-white/10 tactile-btn" id="prjhist-close">
+        <span class="material-symbols-outlined text-[16px] text-zinc-400">close</span>
+      </button>
+    </div>
+    <div class="flex-1 overflow-y-auto px-5 py-3 min-h-0" id="prjhist-body"></div>
+  </div>
+</div>
+
+<!-- PLAN THE BLOCKS -->
+<div class="fixed inset-0 z-[120] hidden items-center justify-center bg-black/70 backdrop-blur-sm" id="blockplan-modal">
+  <div class="w-[660px] max-w-[94vw] max-h-[90vh] flex flex-col rounded-3xl bg-[#0d0f14] border border-white/[0.1] shadow-2xl overflow-hidden" style="animation:modalIn .16s ease-out">
+    <div class="px-5 pt-4 pb-3 border-b border-white/[0.08] flex items-center gap-2">
+      <span class="material-symbols-outlined text-[16px] text-zinc-300">view_in_ar</span>
+      <div class="min-w-0">
+        <div class="font-mono text-[11px] font-bold text-white">THE BLOCK PLAN</div>
+        <div class="font-mono text-[8.5px] text-zinc-400 truncate">What it will build with, agreed before it builds</div>
+      </div>
+      <button class="ml-auto p-1 rounded-lg hover:bg-white/10 tactile-btn" id="blockplan-close">
+        <span class="material-symbols-outlined text-[16px] text-zinc-400">close</span>
+      </button>
+    </div>
+    <div class="flex-1 overflow-y-auto px-5 py-4 space-y-3 min-h-0">
+      <p class="font-mono text-[8.5px] text-zinc-400 leading-snug">
+        Copy the ask, send it, paste the json back. The forms become this project's
+        allow-list and the materials are stated back in every build prompt, so the
+        model is held to the palette it chose instead of inventing one.
+      </p>
+      <button class="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-full bg-white/[0.07] hover:bg-white/[0.16] border border-white/[0.08] font-mono text-[9px] font-semibold text-zinc-200 hover:text-white tactile-btn" id="blockplan-copy">
+        <span class="material-symbols-outlined text-[12px]">content_copy</span>
+        <span>COPY THE ASK</span>
+      </button>
+      <div>
+        <label class="font-mono text-[9.5px] text-zinc-400 uppercase block mb-1">Paste the plan</label>
+        <textarea id="blockplan-input" spellcheck="false" rows="9"
+          class="w-full px-3 py-2.5 rounded-xl bg-black/50 border border-white/[0.1] font-mono text-[10px] text-zinc-100 resize-y focus:outline-none focus:border-white/30"
+          placeholder='{&#10;  "forms": ["cube", "slab_half", "stair"],&#10;  "materials": [&#10;    {"alias": "wall", "texture": "soot_iron_plate", "color": "#3A3F45"}&#10;  ]&#10;}'></textarea>
+      </div>
+      <div id="blockplan-report" class="hidden rounded-xl border border-white/[0.09] bg-black/40 p-3 font-mono text-[9px] leading-relaxed"></div>
+    </div>
+    <div class="px-5 py-3 border-t border-white/[0.08] flex items-center gap-2">
+      <span class="font-mono text-[9px] text-zinc-500" id="blockplan-current"></span>
+      <div class="flex-1"></div>
+      <button class="px-3 py-1.5 rounded-full bg-white/[0.07] hover:bg-white/[0.16] border border-white/[0.08] font-mono text-[9px] font-semibold text-zinc-200 tactile-btn" id="blockplan-cancel">CANCEL</button>
+      <button class="px-3.5 py-1.5 rounded-full bg-emerald-400/90 hover:bg-emerald-300 font-mono text-[9px] font-bold text-black tactile-btn" id="blockplan-apply">LOCK THE PLAN IN</button>
+    </div>
+  </div>
+</div>
+
 <!-- JSON PICK -->
 <div class="fixed inset-0 z-[120] hidden items-center justify-center bg-black/70 backdrop-blur-sm" id="jsonpick-modal">
   <div class="w-[640px] max-w-[94vw] max-h-[88vh] flex flex-col rounded-3xl bg-[#0d0f14] border border-white/[0.1] shadow-2xl overflow-hidden" style="animation:modalIn .16s ease-out">
@@ -1884,23 +2182,38 @@
           <span class="material-symbols-outlined text-[15px]">playlist_add</span>
         </div>
         <div class="min-w-0">
-          <h2 class="font-mono text-xs font-bold text-white">BATCH &mdash; BRIEFS OR DOCUMENTS</h2>
-          <p class="font-mono text-[9px] text-zinc-400 truncate">One line per asset, or paste finished source &mdash; it reads which you gave it</p>
+          <h2 class="font-mono text-xs font-bold text-white">CREATE</h2>
+          <p class="font-mono text-[9px] text-zinc-400 truncate" id="create-sub">Two questions: do you have the AI's answer yet, and how many?</p>
         </div>
       </div>
       <button class="w-7 h-7 rounded-full bg-white/[0.07] hover:bg-white/[0.15] text-zinc-400 hover:text-white flex items-center justify-center tactile-btn shrink-0" id="close-bulk-btn">
         <span class="material-symbols-outlined text-[15px]">close</span>
       </button>
     </div>
+    <!-- The only two questions there have ever been. They used to be spread
+         across three differently-named modals, so "I already have the output"
+         was unreachable from the button that creates things. -->
+    <div class="flex flex-col gap-2 p-2.5 rounded-xl bg-black/30 border border-white/[0.07]">
+      <div class="flex items-center gap-2">
+        <span class="font-mono text-[8.5px] text-zinc-500 uppercase tracking-wider w-[74px] shrink-0">I have</span>
+        <button class="px-3 py-1.5 rounded-full font-mono text-[9.5px] font-semibold tactile-btn border transition-colors" data-create-have="0">A DESCRIPTION &mdash; GIVE ME A PROMPT</button>
+        <button class="px-3 py-1.5 rounded-full font-mono text-[9.5px] font-semibold tactile-btn border transition-colors" data-create-have="1">THE OUTPUT ALREADY</button>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="font-mono text-[8.5px] text-zinc-500 uppercase tracking-wider w-[74px] shrink-0">How many</span>
+        <button class="px-3 py-1.5 rounded-full font-mono text-[9.5px] font-semibold tactile-btn border transition-colors" data-create-batch="0">ONE</button>
+        <button class="px-3 py-1.5 rounded-full font-mono text-[9.5px] font-semibold tactile-btn border transition-colors" data-create-batch="1">BATCH &mdash; SEVERAL AT ONCE</button>
+      </div>
+    </div>
+    <label class="flex items-center gap-2 cursor-pointer" id="bulk-group-row">
+      <input class="rounded focus:ring-0 w-3 h-3" id="bulk-group" type="checkbox" checked/>
+      <span class="font-mono text-[9px] text-zinc-300">Keep this batch together in its own dated folder</span>
+      <span class="font-mono text-[8px] text-zinc-500" id="bulk-group-hint"></span>
+    </label>
     <div>
-      <label class="font-mono text-[10px] text-zinc-400 uppercase block mb-1">Descriptions, or pasted source</label>
+      <label class="font-mono text-[10px] text-zinc-400 uppercase block mb-1" id="bulk-input-label">Descriptions, or pasted source</label>
       <textarea class="w-full h-44 px-3.5 py-2.5 rounded-xl recessed-well font-mono text-[11px] leading-relaxed placeholder-zinc-500 resize-none" id="bulk-input" spellcheck="false" placeholder="rusty_barrel: a dented steel barrel with three ribbed bands&#10;wall_tile: tileable soot-stained concrete, heavy wear&#10;a squat four-legged sentry drone with one amber eye"></textarea>
-      <p class="font-mono text-[8.5px] text-zinc-500 leading-snug mt-1">
-        <span class="text-zinc-300">name: description</span> names the asset. A bare line is just a brief &mdash;
-        the asset adopts its name from the first document that compiles. Bullets and dashes are stripped.
-        Paste whole design documents instead &mdash; fenced or bare, as many as you like &mdash; and they are
-        compiled and filed rather than read as briefs.
-      </p>
+      <p class="font-mono text-[8.5px] text-zinc-500 leading-snug mt-1" id="bulk-help"></p>
       <p class="font-mono text-[8.5px] text-emerald-300/90 leading-snug mt-1" id="bulk-mode-hint"></p>
     </div>
     <div class="grid grid-cols-2 gap-2.5">
@@ -1924,10 +2237,13 @@
       </div>
     </div>
     <div class="flex items-center justify-between gap-2 pt-2 border-t border-white/[0.08]">
-      <span class="font-mono text-[9px] text-zinc-500" id="bulk-tally">0 briefs</span>
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="font-mono text-[9px] text-zinc-500" id="bulk-tally">0 briefs</span>
+        <button class="font-mono text-[8.5px] text-zinc-500 hover:text-zinc-300 underline decoration-dotted shrink-0" id="open-guided-btn" title="What each track is for, with examples">which track?</button>
+      </div>
       <div class="flex items-center gap-2">
         <button class="px-4 py-2 rounded-full bg-white/[0.07] hover:bg-white/[0.15] font-mono text-xs text-zinc-300 tactile-btn" id="cancel-bulk-btn">CANCEL</button>
-        <button class="px-5 py-2 rounded-full bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-bold shadow-glow-white tactile-btn" id="confirm-bulk-btn">CREATE BATCH</button>
+        <button class="px-5 py-2 rounded-full bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-bold shadow-glow-white tactile-btn" id="confirm-bulk-btn">CREATE</button>
       </div>
     </div>
   </div>
@@ -2128,6 +2444,14 @@
    * B. APPLICATION STATE
    * ===================================================================== */
   const state = {
+    palettes: [],          // this project's region palettes
+    texIntent: null,       // what the open texture is for
+    slotInfo: null,        // the open model/prop's colour slots and bindings
+    textureList: [],       // textures available to bind
+    workspaces: [],        // projects: a top-level folder treated as a repo
+    locks: [],             // style locks by scope
+    lockResolved: null,    // the layered lock for the open asset
+    blockPlan: null,       // the forms and materials this build agreed to
     activeProjectId: null,
     activeMode: 'edit',
     activeRightTab: 'workbench',
@@ -2149,7 +2473,7 @@
       orthoCollapsed: false, dockCollapsed: false,
       activeProjectId: null, activeMode: 'edit', activeRightTab: 'workbench',
       autoFork: false, includeReport: true, fullDslSpec: false, systemContext: true,
-      wireframe: false, autoRotate: false, cameraPreset: 'iso', showFloor: true,
+      wireframe: false, litMode: false, autoRotate: false, cameraPreset: 'iso', showFloor: true,
       llmEnabled: false, llmProvider: 'ollama',
       llmEndpoint: 'http://127.0.0.1:11434/v1/chat/completions',
       llmModel: 'qwen2.5-coder:7b', llmApiKey: '', llmAutoCompile: true,
@@ -2182,6 +2506,7 @@
     state.projects = boot.projects;
     state.blocks = boot.blocks || [];
     state.folders = boot.folders || [];
+    state.workspaces = boot.workspaces || [];
     // Texture assets a building's materials can bind to. Derived here so the
     // prompt and the UI agree about what exists.
     state.textures = Object.values(boot.projects || {})
@@ -2224,6 +2549,8 @@
       renderLockState();
       wireframe = !!s.wireframe;
       markToggle('cam-wireframe', wireframe);
+      litMode = !!s.litMode;
+      markToggle('cam-lit', litMode);
       autoRotate = !!s.autoRotate;
       markToggle('cam-autorotate', autoRotate);
       showFloor = s.showFloor !== false;
@@ -2496,6 +2823,9 @@
   })();
 
   let scene = null, camera = null, renderer = null, assetRoot = null;
+  let studioLights = [];      // [light, baseIntensity] - dimmed by LIT mode
+  let gameLightRoot = null;   // the build's own emitters live here
+  let litMode = false;
 
   if (HAS3D) {
     scene = new THREE.Scene();
@@ -2509,13 +2839,20 @@
     renderer.toneMappingExposure = 1.15;
     vp.appendChild(renderer.domElement);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 1.05));
+    // Studio lighting - how an asset is displayed, not how the game lights
+    // it. LIT mode dims these to near nothing and lets the build's own
+    // emitters do the work, so the two are never confused.
+    const amb = new THREE.AmbientLight(0xffffff, 1.05);
+    scene.add(amb);
     const keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
     keyLight.position.set(24, 45, 26); scene.add(keyLight);
     const rimLight = new THREE.DirectionalLight(0x94a3b8, 1.2);
     rimLight.position.set(-25, 20, -25); scene.add(rimLight);
     const bounce = new THREE.DirectionalLight(0x475569, 0.6);
     bounce.position.set(0, -20, 10); scene.add(bounce);
+    studioLights = [[amb, 1.05], [keyLight, 1.8], [rimLight, 1.2], [bounce, 0.6]];
+    gameLightRoot = new THREE.Group();
+    scene.add(gameLightRoot);
 
     assetRoot = new THREE.Group();
     scene.add(assetRoot);
@@ -2542,6 +2879,8 @@
   let animTime = 0, animDuration = 0.5;
   let modelRadius = 20, modelCentreY = 5;
   let partMeshes = {};        // component name -> THREE.Mesh
+  let boneSubs = {};          // bone name -> THREE.Group, parented as the rig is
+  let activeClip = '';        // which animation is on the scrubber
   let selectedPart = null;    // the component an edit is currently scoped to
 
   let gridMajor = null, gridSub = null;
@@ -2619,6 +2958,12 @@
       : [{ name: 'asset', kind: 'all', start: 0, count: pos.length / 9 }];
 
     partMeshes = {};
+    boneSubs = {};
+    const pivotOf = {}, parentOf = {};
+    groups.forEach(g => {
+      pivotOf[g.name] = (g.pivot && g.pivot.length === 3) ? g.pivot : [0, 0, 0];
+      parentOf[g.name] = g.parent || null;
+    });
     groups.forEach(g => {
       const a = g.start * 9, b = (g.start + g.count) * 9;
       const slice = pos.slice(a, b);
@@ -2652,11 +2997,42 @@
         sub.add(line);
         mesh.userData.edges = line;
       } catch {}
-      sub.position.set(offX, offY, offZ);
+      // A bone has to rotate about its own pivot, and a child has to ride its
+      // parent. So the geometry is moved so the pivot sits at the bone's
+      // origin, and the bone is then placed at its pivot relative to its
+      // parent's. This is the same transform the GLB exporter needs, and
+      // without it a nested rig animates from the wrong point entirely.
+      const isBone = g.kind === 'bone';
+      if (isBone) {
+        const pv = pivotOf[g.name];
+        geo.translate(-pv[0], -pv[1], -pv[2]);
+        if (mesh.userData.edges) mesh.userData.edges.geometry.translate(-pv[0], -pv[1], -pv[2]);
+        const par = parentOf[g.name];
+        if (par && pivotOf[par]) {
+          const pp = pivotOf[par];
+          sub.position.set(pv[0] - pp[0], pv[1] - pp[1], pv[2] - pp[2]);
+        } else {
+          sub.position.set(offX + pv[0], offY + pv[1], offZ + pv[2]);
+        }
+        sub.userData.basePos = sub.position.clone();
+        sub.userData.bone = g.name;
+        boneSubs[g.name] = sub;
+      } else {
+        sub.position.set(offX, offY, offZ);
+      }
       sub.userData.part = g.name;
-      grp.add(sub);
       partMeshes[g.name] = mesh;
+      if (!isBone) grp.add(sub);
     });
+
+    // Parent the bones once every group exists, so declaration order cannot
+    // leave a child orphaned.
+    Object.keys(boneSubs).forEach(name => {
+      const par = parentOf[name];
+      if (par && boneSubs[par]) boneSubs[par].add(boneSubs[name]);
+      else grp.add(boneSubs[name]);
+    });
+    poseBones();
 
     const sx = mxx - mnx, sy = mxy - mny, sz = mxz - mnz;
     modelRadius = Math.max(sx, sy, sz) || 20;
@@ -2743,6 +3119,10 @@
       payload = { ok: false, error: err.message };
     }
     state.mesh = payload;
+    // The clip list and the duration are DOM, so they are populated here
+    // rather than inside the 3D builder - a machine with no working WebGL
+    // should still be able to see which clips a revision carries.
+    syncClipPicker();
 
     if (HAS3D) {
       // A driver or WebGL fault here must not take the Studio down with it:
@@ -2752,6 +3132,10 @@
           assetRoot.add(buildTexturePlane(API.BASE + payload.preview, payload.size));
         } else if (payload && payload.ok && payload.positions && payload.positions.length) {
           assetRoot.add(buildRealMesh(payload));
+          // These walk assetRoot, so they run once the mesh is in it.
+          applySlotTextures();
+          buildCut = null;
+          refreshBuildView();
         } else {
           assetRoot.add(buildFailureMarker());
         }
@@ -2893,6 +3277,7 @@
   function scrubFrom(e) {
     const r = scrubber.getBoundingClientRect();
     animTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * animDuration;
+    poseBones();
     updateScrubberUI();
   }
   function updateScrubberUI() {
@@ -2908,6 +3293,56 @@
     document.querySelector('#play-pause-btn .material-symbols-outlined').textContent = isPlaying ? 'pause' : 'play_arrow';
   }
   document.getElementById('play-pause-btn').addEventListener('click', () => { isPlaying = !isPlaying; updatePlayIcon(); });
+
+  (function wireBuildHud() {
+    const t = document.getElementById('build-hud-toggle');
+    if (!t) return;
+    t.addEventListener('click', () => { buildHudOpen = !buildHudOpen; renderBuildHud(); });
+    document.querySelectorAll('[data-buildview]').forEach(b =>
+      b.addEventListener('click', () => {
+        const [lo, hi] = buildLevels();
+        if (b.dataset.buildview === 'outside') {
+          buildCut = null;
+        } else {
+          // Open it at roughly head height, which is where you want to look.
+          buildCut = Math.max(lo, Math.min(hi - 1, lo + Math.round((hi - lo) * 0.55)));
+        }
+        document.getElementById('build-cut').value = String(buildCut === null ? hi : buildCut);
+        refreshBuildView();
+      }));
+    document.getElementById('build-cut').addEventListener('input', e => {
+      const [lo, hi] = buildLevels();
+      const v = parseInt(e.target.value, 10);
+      buildCut = (v >= hi) ? null : v;
+      refreshBuildView();
+    });
+    document.getElementById('build-lit-btn').addEventListener('click', () => {
+      document.getElementById('cam-lit').click();
+      renderBuildHud();
+    });
+    document.getElementById('build-heat-btn').addEventListener('click', () => {
+      buildHeat = !buildHeat;
+      if (buildHeat && litMode) { litMode = false; markToggle('cam-lit', false); }
+      refreshBuildView();
+    });
+  })();
+
+  document.getElementById('cam-lit').addEventListener('click', () => {
+    const L = lightData();
+    if (!L) {
+      toast('NOTHING TO LIGHT', 'LIT mode needs a structure — only builds carry light levels.', 'warn');
+      return;
+    }
+    litMode = !litMode;
+    markToggle('cam-lit', litMode);
+    if (litMode) buildHeat = false;
+    applyLitMode();
+    renderBuildHud();
+    syncSettings({ litMode });
+    if (litMode && !L.emitterCount) {
+      toast('NO EMITTERS', 'Nothing in this build emits light — add material … light=14', 'warn');
+    }
+  });
 
   document.getElementById('cam-wireframe').addEventListener('click', () => {
     wireframe = !wireframe;
@@ -2930,6 +3365,717 @@
 
   /* --- Render loop ----------------------------------------------------- */
   let lastFrame = performance.now(), frames = 0, fpsLast = performance.now(), frameMs = 0;
+  /* ------------------------------------------------------------------
+   * ANIMATION PLAYBACK
+   * The compiler has always produced real keyframe animation and exported
+   * it as proper glTF channels - but the viewport never received the keys,
+   * so animDuration sat at a hardcoded 0.5 and the scrubber drove nothing.
+   * Rotation is XYZ Euler degrees about the bone's pivot, which is exactly
+   * what the GLB exporter writes, so what you scrub is what you ship.
+   * ------------------------------------------------------------------ */
+  function clipsOf() {
+    return (state.mesh && state.mesh.ok && state.mesh.animations) || {};
+  }
+
+  function syncClipPicker() {
+    const clips = clipsOf();
+    const names = Object.keys(clips);
+    const sel = document.getElementById('anim-clip-select');
+    const lab = document.getElementById('anim-name-label');
+    const dot = document.getElementById('anim-dot');
+    if (!sel || !lab) return;
+    if (!names.length) {
+      activeClip = '';
+      animDuration = 0;
+      sel.classList.add('hidden');
+      lab.classList.remove('hidden');
+      lab.textContent = 'static';
+      if (dot) dot.className = 'w-1.5 h-1.5 rounded-full bg-zinc-600';
+      updateScrubberUI();
+      return;
+    }
+    if (!names.includes(activeClip)) activeClip = names[0];
+    sel.innerHTML = names.map(n =>
+      `<option value="${escapeHtml(n)}"${n === activeClip ? ' selected' : ''}>${escapeHtml(n)}${clips[n].loop ? ' ↻' : ''}</option>`).join('');
+    sel.classList.remove('hidden');
+    lab.classList.add('hidden');
+    if (dot) dot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-400';
+    animDuration = Math.max(0.01, clips[activeClip].duration || 0);
+    if (animTime > animDuration) animTime = 0;
+    updateScrubberUI();
+  }
+
+  /** Linear interpolation between the two keys straddling t, per bone. */
+  function sampleBone(keys, t) {
+    let rot = null, pos = null;
+    const pick = field => {
+      const ks = keys.filter(k => (k[field] || []).length === 3);
+      if (!ks.length) return null;
+      if (t <= ks[0].t) return ks[0][field].slice();
+      if (t >= ks[ks.length - 1].t) return ks[ks.length - 1][field].slice();
+      for (let i = 0; i < ks.length - 1; i++) {
+        const a = ks[i], b = ks[i + 1];
+        if (t >= a.t && t <= b.t) {
+          const span = b.t - a.t;
+          const f = span > 1e-6 ? (t - a.t) / span : 0;
+          return [0, 1, 2].map(j => a[field][j] + (b[field][j] - a[field][j]) * f);
+        }
+      }
+      return ks[ks.length - 1][field].slice();
+    };
+    rot = pick('rot');
+    pos = pick('pos');
+    return { rot, pos };
+  }
+
+  function poseBones() {
+    if (!HAS3D) return;
+    const names = Object.keys(boneSubs);
+    if (!names.length) return;
+    // Back to rest first, so a bone the clip never mentions does not keep a
+    // pose left over from the clip before it.
+    names.forEach(n => {
+      const sub = boneSubs[n];
+      sub.rotation.set(0, 0, 0);
+      if (sub.userData.basePos) sub.position.copy(sub.userData.basePos);
+    });
+    const clip = clipsOf()[activeClip];
+    if (!clip || !clip.keys || !clip.keys.length) return;
+    const byBone = {};
+    clip.keys.forEach(k => { (byBone[k.bone] = byBone[k.bone] || []).push(k); });
+    Object.keys(byBone).forEach(bn => {
+      const sub = boneSubs[bn];
+      if (!sub) return;
+      const keys = byBone[bn].slice().sort((a, b) => a.t - b.t);
+      const { rot, pos } = sampleBone(keys, animTime);
+      if (rot) {
+        sub.rotation.set(rot[0] * Math.PI / 180, rot[1] * Math.PI / 180, rot[2] * Math.PI / 180);
+      }
+      if (pos && sub.userData.basePos) {
+        sub.position.set(sub.userData.basePos.x + pos[0],
+                         sub.userData.basePos.y + pos[1],
+                         sub.userData.basePos.z + pos[2]);
+      }
+    });
+  }
+
+  document.getElementById('anim-clip-select').addEventListener('change', e => {
+    activeClip = e.target.value;
+    animTime = 0;
+    const c = clipsOf()[activeClip];
+    animDuration = Math.max(0.01, (c && c.duration) || 0);
+    updateScrubberUI();
+    poseBones();
+  });
+
+  /* A small read-only window onto the running viewport. Handy for inspecting
+   * a rig from the browser console, and it gives the browser tests something
+   * to assert on other than pixels. */
+  window.__studio = {
+    get clips() { return clipsOf(); },
+    get clip() { return activeClip; },
+    get time() { return animTime; },
+    get duration() { return animDuration; },
+    get meshOk() { return !!(state.mesh && state.mesh.ok); },
+    get project() { return (getActiveProject() || {}).id || ''; },
+    bones() {
+      const out = {};
+      Object.keys(boneSubs).forEach(n => {
+        const sb = boneSubs[n];
+        out[n] = {
+          pos: [sb.position.x, sb.position.y, sb.position.z],
+          rotDeg: [sb.rotation.x, sb.rotation.y, sb.rotation.z].map(r => r * 180 / Math.PI),
+          children: sb.children.filter(c => c.userData && c.userData.bone).map(c => c.userData.bone),
+        };
+      });
+      return out;
+    },
+    seek(t) { animTime = t; poseBones(); updateScrubberUI(); return this.bones(); },
+    get lit() { return { on: litMode, lights: gameLightRoot ? gameLightRoot.children.length : 0,
+                         data: lightData() }; },
+    clipsFromBrief(t) { return clipsFromBrief(t); },
+    reveal(pid) { revealAsset(pid, { flash: true }); },
+    probeSlots() {
+      const st = (state.mesh && state.mesh.slotTextures) || null;
+      const out = { st, meshes: [] };
+      if (!assetRoot) return { error: 'no assetRoot' };
+      assetRoot.traverse(o => {
+        if (!o.geometry) return;
+        const a = o.geometry.attributes || {};
+        const row = { part: o.userData && o.userData.part, hasPos: !!a.position, hasCol: !!a.color };
+        if (a.color && a.position) {
+          const C = a.color.array;
+          const seen = new Set();
+          for (let i = 0; i < C.length; i += 9) seen.add(hexOfVertex(C, i));
+          row.hexes = [...seen];
+        }
+        out.meshes.push(row);
+      });
+      return out;
+    },
+    get verts() {
+      let n = 0;
+      if (assetRoot) {
+        assetRoot.traverse(x => {
+          if (x.geometry && x.geometry.attributes && x.geometry.attributes.position
+              && x.userData && x.userData.part) {
+            n += x.geometry.attributes.position.array.length;
+          }
+        });
+      }
+      return n;
+    },
+    get build() { return { cut: buildCut, heat: buildHeat, levels: buildLevels() }; },
+    get plan() { return state.blockPlan; },
+    get projects() { return { all: state.workspaces, active: state.settings.activeWorkspaceId || '' }; },
+    setProject(id) { return setActiveWorkspace(id); },
+    projectHistory(id) { return openProjectHistory(id); },
+    get forms() { return activeStyle().forms; },
+    get textured() {
+      const out = [];
+      if (assetRoot) {
+        assetRoot.traverse(o => {
+          if (o.geometry && o.geometry.attributes && o.geometry.attributes.uv) {
+            out.push({ part: o.userData.part,
+                       uvs: o.geometry.attributes.uv.array.length,
+                       pos: o.geometry.attributes.position.array.length,
+                       hasMap: !!(o.material && o.material.map) });
+          }
+        });
+      }
+      return { slots: (state.mesh && state.mesh.slotTextures) || null, meshes: out };
+    },
+  };
+
+  /* =====================================================================
+   * LIT MODE
+   * Default is studio lighting: the asset shown as clearly as possible, its
+   * own colours, no light physics. That is a display choice and it is right
+   * for designing a shape.
+   *
+   * LIT mode answers a different question - will this build be lit in the
+   * game - and that has a numeric answer the renderer alone cannot give.
+   * So it does both: real GPU point lights at the emitters for the look,
+   * and the compiler's propagated 0-15 grid applied to the geometry for the
+   * truth. What you see is what the engine will compute.
+   * =================================================================== */
+  function lightData() {
+    return (state.mesh && state.mesh.ok && state.mesh.light) || null;
+  }
+
+  function clearGameLights() {
+    if (!gameLightRoot) return;
+    while (gameLightRoot.children.length) {
+      const c = gameLightRoot.children.pop();
+      if (c.dispose) c.dispose();
+    }
+  }
+
+  /** Per-cell level from the propagated grid, as a lookup. */
+  function lightGrid(L) {
+    const g = new Map();
+    (L.cells || []).forEach(([x, y, z, lvl]) => g.set(`${x},${y},${z}`, lvl));
+    return g;
+  }
+
+  function applyLitMode() {
+    if (!HAS3D) return;
+    const L = lightData();
+    const on = litMode && !!L;
+    studioLights.forEach(([lt, base]) => { lt.intensity = on ? base * 0.06 : base; });
+    clearGameLights();
+    if (!on) {
+      assetRoot.traverse(o => {
+        if (o.material && o.material.emissive) {
+          o.material.emissiveIntensity = 0;
+          o.material.emissive.setHex(0x000000);
+        }
+        if (o.geometry && o.geometry.attributes && o.geometry.attributes.color
+            && o.userData.flatColors) {
+          // Copy element-wise rather than with .set: the attribute array is a
+          // typed array in three.js but need not be, and a throw here would
+          // leave the stage stuck in lit colours with the lights already off.
+          const dst = o.geometry.attributes.color.array;
+          const src = o.userData.flatColors;
+          for (let i = 0; i < dst.length && i < src.length; i++) dst[i] = src[i];
+          o.geometry.attributes.color.needsUpdate = true;
+        }
+      });
+      renderStageHud();
+      return;
+    }
+
+    // One real point light per emitter, brightest first. The cap is for the
+    // forward renderer, not the model: the baked grid below still carries
+    // every emitter's contribution, so a capped light only costs specular.
+    (L.emitters || []).slice(0, 28).forEach(e => {
+      const col = new THREE.Color(e.color || '#FFD9A0');
+      const pl = new THREE.PointLight(col, 1.5 * (e.level / L.max), e.level + 1.5, 1.4);
+      pl.position.set(e.pos[0] + 0.5, e.pos[1] + 0.5, e.pos[2] + 0.5);
+      gameLightRoot.add(pl);
+    });
+
+    // The build's own light model, written into vertex colours. A cell at
+    // level 0 goes black however close a point light happens to be.
+    const grid = lightGrid(L);
+    const mn = state.mesh.min || [0, 0, 0];
+    assetRoot.traverse(o => {
+      const geo = o.geometry;
+      if (!geo || !geo.attributes || !geo.attributes.color || !geo.attributes.position) return;
+      const col = geo.attributes.color.array;
+      const pos = geo.attributes.position.array;
+      if (!o.userData.flatColors) {
+        o.userData.flatColors = (col.slice ? col.slice(0) : Array.from(col));
+      }
+      const flat = o.userData.flatColors;
+      for (let i = 0; i < col.length; i += 3) {
+        const cx = Math.floor(pos[i] - mn[0]);
+        const cy = Math.floor(pos[i + 1] - mn[1]);
+        const cz = Math.floor(pos[i + 2] - mn[2]);
+        let lvl = grid.get(`${cx},${cy},${cz}`);
+        if (lvl === undefined) {
+          // A face sits on the boundary between cells; take the brightest
+          // neighbour so a lit room does not get black walls.
+          lvl = 0;
+          for (let dx = -1; dx <= 0; dx++) {
+            for (let dy = -1; dy <= 0; dy++) {
+              for (let dz = -1; dz <= 0; dz++) {
+                const v = grid.get(`${cx + dx},${cy + dy},${cz + dz}`);
+                if (v !== undefined && v > lvl) lvl = v;
+              }
+            }
+          }
+        }
+        // Ambient floor of 0.06 so a dark cell reads as dark, not missing.
+        const f = 0.06 + 0.94 * Math.pow(lvl / L.max, 1.35);
+        col[i] = flat[i] * f;
+        col[i + 1] = flat[i + 1] * f;
+        col[i + 2] = flat[i + 2] * f;
+      }
+      geo.attributes.color.needsUpdate = true;
+    });
+
+    // An emitter block should look like the source, not a lit surface.
+    const emitSet = new Set((L.emitters || []).map(e => e.pos.join(',')));
+    assetRoot.traverse(o => {
+      if (!o.material || !o.material.emissive) return;
+      const g = (state.mesh.groups || []).find(x => x.name === o.userData.part);
+      if (!g) return;
+      const anyEmit = [...emitSet].length > 0;
+      if (anyEmit && g.color) {
+        o.material.emissive.set(g.color);
+        o.material.emissiveIntensity = 0.0;
+      }
+    });
+    renderStageHud();
+  }
+
+  /** The numbers behind the picture, so LIT is not just a look. */
+  function renderStageHud() {
+    const host = document.getElementById('lit-hud');
+    if (!host) return;
+    const L = lightData();
+    if (!litMode || !L) { host.classList.add('hidden'); return; }
+    const s = L.survey || {};
+    const dark = s.dark_standable || 0;
+    const stand = s.standable || 0;
+    const pct = stand ? Math.round(100 * dark / stand) : 0;
+    const tone = dark === 0 ? 'text-emerald-300' : (pct > 40 ? 'text-red-300' : 'text-amber-300');
+    host.innerHTML = `<div class="flex items-center gap-2 flex-wrap">
+      <span class="font-mono text-[9px] text-zinc-400">${L.emitterCount} emitter(s), brightest ${s.brightest || 0}/${L.max}</span>
+      <span class="font-mono text-[9px] ${tone}">${dark} of ${stand} standable cells at or below ${L.threshold}${dark ? ` (${pct}% dark, darkest ${s.darkest})` : ' — fully lit'}</span>
+    </div>`;
+    host.classList.remove('hidden');
+  }
+
+  /* =====================================================================
+   * SLOT TEXTURES IN THE VIEWPORT
+   * The geometry has no UVs - the exporter writes none - and the model and
+   * prop grammars have no texture binding, so there is nothing to sample
+   * with. UVs are generated here instead, from world position: for an
+   * axis-aligned voxel face that is exact, and for a swept solid it is a
+   * reasonable projection. One tile per block either way, which is 16
+   * voxels on a model and one cell on a structure.
+   * =================================================================== */
+  const slotTexCache = new Map();
+
+  function slotTextureFor(hex) {
+    const st = (state.mesh && state.mesh.slotTextures) || null;
+    if (!st || !hex) return null;
+    return st[String(hex).toUpperCase()] || null;
+  }
+
+  function loadSlotTexture(url, onReady) {
+    // Must RETURN the cached texture: falling out of here with no value
+    // meant the second application set material.map to undefined, so any
+    // re-render - a cut, a light toggle - silently stripped the textures.
+    if (slotTexCache.has(url)) {
+      const hit = slotTexCache.get(url);
+      if (onReady) onReady(hit);
+      return hit;
+    }
+    const loader = new THREE.TextureLoader();
+    const tex = loader.load(API.BASE + url, () => { if (onReady) onReady(tex); });
+    tex.magFilter = THREE.NearestFilter;      // these are 16px tiles
+    tex.minFilter = THREE.NearestFilter;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    slotTexCache.set(url, tex);
+    return tex;
+  }
+
+  function generatePlanarUVs_unused(geo, tile) {
+    const pos = geo.attributes.position;
+    if (!pos) return;
+    const p = pos.array;
+    const uv = new Float32Array((p.length / 3) * 2);
+    const t = tile || 16;
+    for (let i = 0; i < p.length; i += 9) {
+      // Face normal from the triangle's own two edges.
+      const ax = p[i + 3] - p[i], ay = p[i + 4] - p[i + 1], az = p[i + 5] - p[i + 2];
+      const bx = p[i + 6] - p[i], by = p[i + 7] - p[i + 1], bz = p[i + 8] - p[i + 2];
+      const nx = Math.abs(ay * bz - az * by);
+      const ny = Math.abs(az * bx - ax * bz);
+      const nz = Math.abs(ax * by - ay * bx);
+      for (let v = 0; v < 3; v++) {
+        const x = p[i + v * 3], y = p[i + v * 3 + 1], z = p[i + v * 3 + 2];
+        let u, w;
+        if (nx >= ny && nx >= nz) { u = z; w = y; }        // facing X
+        else if (ny >= nx && ny >= nz) { u = x; w = z; }   // facing Y
+        else { u = x; w = y; }                              // facing Z
+        const o = ((i / 9) * 3 + v) * 2;
+        uv[o] = u / t;
+        uv[o + 1] = w / t;
+      }
+    }
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  }
+
+  /** Put the bound texture on the triangles whose colour is that slot.
+   *
+   *  A bone is NOT a material slot: one bone can hold boxes of several
+   *  colours, and the payload's bone groups carry no colour at all. The
+   *  colour lives per vertex, so the triangles are bucketed by it and the
+   *  mesh gets one geometry group per bucket with a material each. Models
+   *  are small enough (a few hundred triangles) that rebuilding the
+   *  geometry this way costs nothing.
+   */
+  function hexOfVertex(col, i) {
+    const r = Math.round(col[i] * 255), g = Math.round(col[i + 1] * 255), b = Math.round(col[i + 2] * 255);
+    return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase();
+  }
+
+  function applySlotTextures() {
+    if (!HAS3D || !assetRoot) return;
+    // A structure's textures come from its own `material` lines, not from
+    // slot bindings - this pass would strip them.
+    if (state.mesh && state.mesh.kind === 'structure') return;
+    const st = (state.mesh && state.mesh.slotTextures) || null;
+    assetRoot.traverse(o => {
+      if (!o.geometry || !o.userData.part) return;
+      const geo = o.geometry;
+      const pos = geo.attributes && geo.attributes.position;
+      const col = geo.attributes && geo.attributes.color;
+      if (!pos || !col) return;
+
+      // Restore the untouched geometry before deciding again, so unbinding
+      // a slot really does put the flat mesh back.
+      if (o.userData.baseGeo) {
+        geo.attributes.position.array = o.userData.baseGeo.pos;
+        geo.attributes.color.array = o.userData.baseGeo.col;
+      } else {
+        o.userData.baseGeo = {
+          pos: pos.array.slice ? pos.array.slice(0) : Array.from(pos.array),
+          col: col.array.slice ? col.array.slice(0) : Array.from(col.array),
+        };
+      }
+      const P = o.userData.baseGeo.pos, C = o.userData.baseGeo.col;
+      if (!st || !Object.keys(st).length) {
+        if (geo.clearGroups) geo.clearGroups();
+        if (Array.isArray(o.material)) o.material = o.userData.baseMaterial || o.material[0];
+        if (o.material && o.material.map) { o.material.map = null; o.material.needsUpdate = true; }
+        if (geo.attributes.uv) delete geo.attributes.uv;
+        return;
+      }
+
+      // Bucket each triangle: '' means no texture on this colour.
+      const buckets = new Map();
+      for (let i = 0; i < P.length; i += 9) {
+        const hx = hexOfVertex(C, i);
+        const key = st[hx] ? hx : '';
+        if (!buckets.has(key)) buckets.set(key, []);
+        buckets.get(key).push(i);
+      }
+      if (buckets.size === 1 && buckets.has('')) return;   // nothing textured here
+
+      const order = [...buckets.keys()].sort();            // '' first
+      const nP = new Float32Array(P.length);
+      const nC = new Float32Array(C.length);
+      const nU = new Float32Array((P.length / 3) * 2);
+      const mats = [];
+      if (!o.userData.baseMaterial) o.userData.baseMaterial = o.material;
+      let w = 0;
+      if (geo.clearGroups) geo.clearGroups();
+      order.forEach(key => {
+        const start = w / 3;
+        buckets.get(key).forEach(i => {
+          for (let k = 0; k < 9; k++) { nP[w + k] = P[i + k]; nC[w + k] = C[i + k]; }
+          w += 9;
+        });
+        const count = (w / 3) - start;
+        if (geo.addGroup) geo.addGroup(start, count, mats.length);
+        if (!key) {
+          mats.push(o.userData.baseMaterial);
+        } else {
+          const info = st[key];
+          const m = o.userData.baseMaterial.clone
+            ? o.userData.baseMaterial.clone()
+            : new THREE.MeshStandardMaterial({ vertexColors: true });
+          m.map = loadSlotTexture(info.url, () => { m.needsUpdate = true; });
+          m.needsUpdate = true;
+          mats.push(m);
+        }
+      });
+      geo.attributes.position.array = nP;
+      geo.attributes.color.array = nC;
+      geo.attributes.position.needsUpdate = true;
+      geo.attributes.color.needsUpdate = true;
+      generatePlanarUVsInto(nP, nU, (st[order.find(k => k)] || {}).tile || 16);
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(nU, 2));
+      o.material = mats.length > 1 ? mats : mats[0];
+    });
+  }
+
+  /** Planar UVs chosen per triangle by its dominant axis. */
+  function generatePlanarUVsInto(p, uv, tile) {
+    const t = tile || 16;
+    for (let i = 0; i < p.length; i += 9) {
+      const ax = p[i + 3] - p[i], ay = p[i + 4] - p[i + 1], az = p[i + 5] - p[i + 2];
+      const bx = p[i + 6] - p[i], by = p[i + 7] - p[i + 1], bz = p[i + 8] - p[i + 2];
+      const nx = Math.abs(ay * bz - az * by);
+      const ny = Math.abs(az * bx - ax * bz);
+      const nz = Math.abs(ax * by - ay * bx);
+      for (let v = 0; v < 3; v++) {
+        const x = p[i + v * 3], y = p[i + v * 3 + 1], z = p[i + v * 3 + 2];
+        let u, w2;
+        if (nx >= ny && nx >= nz) { u = z; w2 = y; }
+        else if (ny >= nx && ny >= nz) { u = x; w2 = z; }
+        else { u = x; w2 = y; }
+        const o = ((i / 9) * 3 + v) * 2;
+        uv[o] = u / t;
+        uv[o + 1] = w2 / t;
+      }
+    }
+  }
+
+  /* =====================================================================
+   * BUILD INSPECTOR
+   * A structure declares its own textures - `material wall soot_iron_plate`
+   * - and the payload used to drop the texture name, so a building with
+   * every texture declared still rendered as flat paint and nothing said
+   * so. That is the difference this panel exists to show: a material is
+   * TEXTURED, or it names a texture that does not exist, or it was only
+   * ever a colour.
+   *
+   * Cutting the build open is done by dropping triangles above a level
+   * rather than by a clip plane, so the interior reads as solid geometry
+   * from any angle instead of as a hollow shell.
+   * =================================================================== */
+  let buildCut = null;        // null = whole building, else max Y kept
+  let buildHeat = false;      // paint light level instead of material colour
+  let buildHudOpen = true;
+
+  function isStructure() {
+    const p = getActiveProject();
+    return !!p && resolvedTrack(p) === 'structure' && !!(state.mesh && state.mesh.ok);
+  }
+
+  function buildLevels() {
+    const mn = (state.mesh && state.mesh.min) || [0, 0, 0];
+    const mx = (state.mesh && state.mesh.max) || [0, 0, 0];
+    return [Math.floor(mn[1]), Math.ceil(mx[1])];
+  }
+
+  function renderBuildHud() {
+    const hud = document.getElementById('build-hud');
+    if (!hud) return;
+    if (!isStructure()) { hud.classList.add('hidden'); return; }
+    hud.classList.remove('hidden');
+    const m = state.mesh;
+    const groups = m.groups || [];
+    const forms = m.formCounts || {};
+    const L = m.light || null;
+
+    const textured = groups.filter(g => g.texState === 'ok').length;
+    const missing = groups.filter(g => g.texState === 'missing').length;
+    const painted = groups.filter(g => g.texState === 'none').length;
+    document.getElementById('build-hud-sum').textContent =
+      `${m.cellCount || 0} cells · ${groups.length} materials · ${textured}/${groups.length} textured`;
+
+    document.getElementById('build-hud-body').classList.toggle('hidden', !buildHudOpen);
+    document.getElementById('build-hud-caret').style.transform =
+      buildHudOpen ? 'rotate(180deg)' : 'none';
+
+    // blocks actually used
+    document.getElementById('build-forms').innerHTML = Object.keys(forms).length
+      ? Object.entries(forms).sort((a, b) => b[1] - a[1]).map(([f, n]) =>
+          `<span class="px-1.5 py-0.5 rounded-md bg-white/[0.07] border border-white/[0.08] font-mono text-[8px] text-zinc-200">${escapeHtml(f)} <span class="text-zinc-500">${n}</span></span>`).join('')
+      : '<span class="font-mono text-[8px] text-zinc-500">none</span>';
+
+    // materials, and the truth about each one's texture
+    document.getElementById('build-mats').innerHTML = groups.map(g => {
+      const st = g.texState || 'none';
+      const tone = st === 'ok' ? 'text-emerald-300' : st === 'missing' ? 'text-red-300' : 'text-amber-300';
+      const label = st === 'ok' ? `textured · ${g.texture}`
+        : st === 'missing' ? `MISSING: ${g.texture}`
+        : 'colour only — no texture named';
+      const lit = (g.light || 0) > 0 ? `<span class="font-mono text-[7.5px] text-amber-200">light ${g.light}</span>` : '';
+      return `<div class="px-2 py-1.5 rounded-lg bg-white/[0.04] border border-white/[0.07] flex items-center gap-1.5 min-w-0">
+        <span class="w-3.5 h-3.5 rounded border border-white/25 shrink-0" style="background:${escapeHtml(g.color || '#888')}"></span>
+        <div class="min-w-0 flex-1">
+          <div class="font-mono text-[8.5px] text-zinc-200 truncate">${escapeHtml(g.name)} <span class="text-zinc-500">${g.cells || 0}</span></div>
+          <div class="font-mono text-[7.5px] ${tone} truncate">${escapeHtml(label)}</div>
+        </div>${lit}
+      </div>`;
+    }).join('') || '<span class="font-mono text-[8px] text-zinc-500">none</span>';
+
+    if (missing || painted) {
+      document.getElementById('build-mats').insertAdjacentHTML('beforeend',
+        `<div class="font-mono text-[7.5px] text-zinc-500 px-1 pt-0.5">${
+          missing ? `${missing} material(s) name a texture that is not in this workspace. ` : ''
+        }${painted ? `${painted} never named one.` : ''}</div>`);
+    }
+
+    // view controls
+    const [lo, hi] = buildLevels();
+    const cut = document.getElementById('build-cut');
+    cut.min = String(lo); cut.max = String(hi);
+    if (buildCut === null) cut.value = String(hi);
+    document.getElementById('build-cut-label').textContent =
+      buildCut === null ? 'all' : `y ≤ ${buildCut}`;
+    document.querySelectorAll('[data-buildview]').forEach(b => {
+      const inside = b.dataset.buildview === 'inside';
+      const on = inside ? (buildCut !== null) : (buildCut === null);
+      b.className = `flex-1 py-1 rounded-full font-mono text-[8.5px] font-semibold border tactile-btn ${
+        on ? 'bg-white text-zinc-950 border-white' : 'bg-white/[0.05] text-zinc-300 border-white/[0.1]'}`;
+    });
+    const litBtn = document.getElementById('build-lit-btn');
+    litBtn.textContent = litMode ? 'LIGHT ON' : 'LIGHT OFF';
+    litBtn.className = `flex-1 py-1 rounded-full font-mono text-[8.5px] font-semibold border tactile-btn ${
+      litMode ? 'bg-amber-300 text-zinc-950 border-amber-300' : 'bg-white/[0.05] text-zinc-300 border-white/[0.1]'}`;
+    const heatBtn = document.getElementById('build-heat-btn');
+    heatBtn.className = `flex-1 py-1 rounded-full font-mono text-[8.5px] font-semibold border tactile-btn ${
+      buildHeat ? 'bg-white text-zinc-950 border-white' : 'bg-white/[0.05] text-zinc-300 border-white/[0.1]'}`;
+    heatBtn.disabled = !L;
+    heatBtn.style.opacity = L ? '1' : '.45';
+  }
+
+  /** Drop every triangle that sits above the cut, so you see inside. */
+  function applyBuildCut() {
+    if (!HAS3D || !assetRoot) return;
+    assetRoot.traverse(o => {
+      const geo = o.geometry;
+      if (!geo || !geo.attributes || !geo.attributes.position || !o.userData.part) return;
+      if (!o.userData.cutBase) {
+        const p = geo.attributes.position.array, c = geo.attributes.color;
+        o.userData.cutBase = {
+          pos: p.slice ? p.slice(0) : Array.from(p),
+          col: c ? (c.array.slice ? c.array.slice(0) : Array.from(c.array)) : null,
+        };
+      }
+      const B = o.userData.cutBase;
+      if (buildCut === null) {
+        geo.attributes.position.array = B.pos.slice ? B.pos.slice(0) : Array.from(B.pos);
+        if (B.col && geo.attributes.color) {
+          geo.attributes.color.array = B.col.slice ? B.col.slice(0) : Array.from(B.col);
+        }
+        if (geo.setDrawRange) geo.setDrawRange(0, B.pos.length / 3);
+        geo.attributes.position.needsUpdate = true;
+        if (geo.attributes.color) geo.attributes.color.needsUpdate = true;
+        return;
+      }
+      const P = [], C = [];
+      for (let i = 0; i < B.pos.length; i += 9) {
+        const topY = Math.max(B.pos[i + 1], B.pos[i + 4], B.pos[i + 7]);
+        if (topY > buildCut + 0.001) continue;
+        for (let k = 0; k < 9; k++) {
+          P.push(B.pos[i + k]);
+          if (B.col) C.push(B.col[i + k]);
+        }
+      }
+      geo.attributes.position.array = new Float32Array(P);
+      if (B.col && geo.attributes.color) geo.attributes.color.array = new Float32Array(C);
+      if (geo.setDrawRange) geo.setDrawRange(0, P.length / 3);
+      geo.attributes.position.needsUpdate = true;
+      if (geo.attributes.color) geo.attributes.color.needsUpdate = true;
+    });
+  }
+
+  /** Paint the propagated light level instead of the material colour. */
+  function applyBuildHeat() {
+    if (!HAS3D || !assetRoot) return;
+    const L = (state.mesh && state.mesh.light) || null;
+    const grid = L ? lightGrid(L) : null;
+    const mn = (state.mesh && state.mesh.min) || [0, 0, 0];
+    assetRoot.traverse(o => {
+      const geo = o.geometry;
+      if (!geo || !geo.attributes || !geo.attributes.color || !o.userData.part) return;
+      const col = geo.attributes.color.array, pos = geo.attributes.position.array;
+      if (!buildHeat || !grid) return;
+      for (let i = 0; i < col.length; i += 3) {
+        const cx = Math.floor(pos[i] - mn[0]);
+        const cy = Math.floor(pos[i + 1] - mn[1]);
+        const cz = Math.floor(pos[i + 2] - mn[2]);
+        let lvl = grid.get(`${cx},${cy},${cz}`);
+        if (lvl === undefined) {
+          lvl = 0;
+          for (let dx = -1; dx <= 0; dx++) for (let dy = -1; dy <= 0; dy++) for (let dz = -1; dz <= 0; dz++) {
+            const v = grid.get(`${cx + dx},${cy + dy},${cz + dz}`);
+            if (v !== undefined && v > lvl) lvl = v;
+          }
+        }
+        // dark blue at 0 through to pale yellow at 15
+        const f = lvl / L.max;
+        col[i] = 0.08 + 0.92 * Math.pow(f, 0.8);
+        col[i + 1] = 0.10 + 0.80 * Math.pow(f, 1.1);
+        col[i + 2] = 0.35 + 0.25 * (1 - f);
+      }
+      geo.attributes.color.needsUpdate = true;
+    });
+  }
+
+  /** A structure's textures come from its own document, not from slots. */
+  function applyStructureTextures() {
+    if (!HAS3D || !assetRoot) return;
+    const groups = (state.mesh && state.mesh.groups) || [];
+    assetRoot.traverse(o => {
+      if (!o.material || !o.geometry || !o.userData.part) return;
+      const g = groups.find(x => x.name === o.userData.part);
+      if (!g || g.texState !== 'ok' || !g.texUrl) {
+        if (o.material.map) { o.material.map = null; o.material.needsUpdate = true; }
+        return;
+      }
+      generatePlanarUVsOn(o.geometry, 1.0);     // one tile per cell
+      o.material.map = loadSlotTexture(g.texUrl, () => { o.material.needsUpdate = true; });
+      o.material.needsUpdate = true;
+    });
+  }
+
+  function generatePlanarUVsOn(geo, tile) {
+    const pos = geo.attributes && geo.attributes.position;
+    if (!pos) return;
+    const uv = new Float32Array((pos.array.length / 3) * 2);
+    generatePlanarUVsInto(pos.array, uv, tile);
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  }
+
+  function refreshBuildView() {
+    applyBuildCut();
+    applyStructureTextures();
+    if (buildHeat) applyBuildHeat(); else applyLitMode();
+    renderBuildHud();
+  }
+
   function animate(now) {
     requestAnimationFrame(animate);
     if (!HAS3D) return;
@@ -2944,9 +4090,12 @@
       if (lat) lat.textContent = frameMs.toFixed(2) + ' ms';
       frames = 0; fpsLast = now;
     }
-    if (isPlaying && !scrubbing && animDuration > 0) {
-      animTime = (animTime + dt) % animDuration;
+    if (isPlaying && !scrubbing && animDuration > 0 && Object.keys(clipsOf()).length) {
+      const clip = clipsOf()[activeClip];
+      animTime += dt;
+      if (animTime > animDuration) animTime = (clip && clip.loop === false) ? animDuration : 0;
       updateScrubberUI();
+      poseBones();
     }
     if (autoRotate) { orb.az += dt * 0.45; applyCamera(); }
     renderer.render(scene, camera);
@@ -3250,10 +4399,17 @@
       fullDsl: document.getElementById('ctx-full-dsl').checked,
       context: document.getElementById('ctx-system').checked,
       style: activeStyle(),
-      styleLock: state.settings.styleLock || '',
+      styleLock: (state.lockResolved && state.lockResolved.text) || state.settings.styleLock || '',
       styleLockOn: document.getElementById('lock-on').checked,
+      variantLock: activeVariantLock(),
+      textureIntent: state.texIntent || null,
+      slots: (state.slotInfo && state.slotInfo.slots) || null,
+      slotBindings: (state.slotInfo && state.slotInfo.bindings) || null,
+      wantClips: document.getElementById('ctx-clips').checked,
+      clips: clipsFromBrief(state.lastInstruction || ''),
       blocks: reuseActive() ? (state.blocks || []) : [],
       textures: (state.textures || []),
+      blockPlan: state.blockPlan || null,
     };
     if (API.LIVE) {
       try {
@@ -3720,6 +4876,77 @@
   const lockState = document.getElementById('lock-state');
   let lockTimer = null;
 
+  /* The lock used to be one global string, so a workspace holding two art
+   * directions could only have one of them. A lock now has a SCOPE - every
+   * project, this project, or this folder and below - and the ones covering
+   * an asset layer general to specific, the same inheritance the region
+   * palettes use. */
+  let lockScope = '';          // which scope the textarea is editing
+
+  function lockScopeChoices() {
+    const out = [{ id: '', label: 'ALL', title: 'Applies to every project' }];
+    const w = activeWorkspace();
+    if (w) out.push({ id: `prj:${w.id}`, label: 'THIS PROJECT', title: `Only ${w.name}` });
+    const p = getActiveProject();
+    const folder = (p && p.folder) || '';
+    if (folder) {
+      out.push({ id: `dir:${folder}`, label: 'THIS FOLDER', title: `${folder} and everything under it` });
+    }
+    return out;
+  }
+
+  function renderLockScope() {
+    const row = document.getElementById('lock-scope-row');
+    if (!row) return;
+    const choices = lockScopeChoices();
+    if (!choices.some(c => c.id === lockScope)) lockScope = '';
+    row.innerHTML = choices.map(c => {
+      const on = c.id === lockScope;
+      const has = (state.locks || []).some(l => l.scope === c.id);
+      return `<button class="px-2 py-0.5 rounded-full font-mono text-[8px] font-semibold border tactile-btn ${
+        on ? 'bg-white text-zinc-950 border-white' : 'bg-white/[0.05] text-zinc-300 border-white/[0.1]'
+      }" data-lockscope="${escapeHtml(c.id)}" title="${escapeHtml(c.title)}">${c.label}${has ? ' •' : ''}</button>`;
+    }).join('');
+    row.querySelectorAll('[data-lockscope]').forEach(b =>
+      b.addEventListener('click', () => { lockScope = b.dataset.lockscope; loadLockForScope(); }));
+    const applied = (state.lockResolved && state.lockResolved.applied) || [];
+    document.getElementById('lock-applied').textContent = applied.length
+      ? 'Sent with this asset: ' + applied.map(a => a.label).join(' + ')
+      : 'Nothing is locked for this asset yet.';
+  }
+
+  function loadLockForScope() {
+    const found = (state.locks || []).find(l => l.scope === lockScope);
+    lockEl.value = found ? found.body : (lockScope === '' ? (state.settings.styleLock || '') : '');
+    renderLockScope();
+    renderLockState();
+  }
+
+  async function loadLocks() {
+    if (!API.LIVE) return;
+    const p = getActiveProject();
+    try {
+      const r = await apiCall('/api/locks', {
+        method: 'POST',
+        body: JSON.stringify({ projectId: p ? p.id : '', fallback: state.settings.styleLock || '' }),
+      });
+      state.locks = r.locks || [];
+      state.lockResolved = r.resolved || null;
+    } catch { state.locks = []; state.lockResolved = null; }
+    renderLockScope();
+  }
+
+  async function saveLockForScope(body) {
+    try {
+      const r = await apiCall('/api/locks/set', {
+        method: 'POST', body: JSON.stringify({ scope: lockScope, body }),
+      });
+      state.locks = r.locks || [];
+      await loadLocks();
+      await refreshPromptPreview();
+    } catch (err) { toast('LOCK NOT SAVED', err.message, 'err'); }
+  }
+
   function renderLockState() {
     const on = document.getElementById('lock-on').checked;
     const n = (state.settings.styleLock || '').trim().length;
@@ -3787,8 +5014,10 @@
     renderLockState();
     if (lockTimer) clearTimeout(lockTimer);
     const flush = async () => {
-      syncSettings({ styleLock: lockEl.value });
-      await refreshPromptPreview();
+      // The ALL scope is still the old global setting, so an existing
+      // workspace keeps working; the others are stored per scope.
+      if (lockScope === '') syncSettings({ styleLock: lockEl.value });
+      await saveLockForScope(lockEl.value);
       renderLockState();
     };
     if (immediate) flush(); else lockTimer = setTimeout(flush, 500);
@@ -4172,8 +5401,19 @@
     };
     // Folders someone made deliberately come first, so an empty one is still
     // there to drop things into. Then the folders assets imply by their path.
-    (state.folders || []).forEach(p => reach(String(p).split('/').map(x => x.trim()).filter(Boolean)));
+    // Scoped to the project you are in, the way an IDE shows one project's
+    // files: everything under its root and nothing else. "All projects" shows
+    // the whole workspace, which is what this always used to do.
+    const wsRoot = activeWorkspaceRoot();
+    const inScope = path => {
+      if (!wsRoot) return true;
+      const f = String(path || '');
+      return f === wsRoot || f.startsWith(wsRoot + '/');
+    };
+    (state.folders || []).filter(inScope)
+      .forEach(p => reach(String(p).split('/').map(x => x.trim()).filter(Boolean)));
     Object.values(state.projects).forEach(it => {
+      if (!inScope(it.folder || '')) return;
       reach((it.folder || '').split('/').map(x => x.trim()).filter(Boolean)).items.push(it);
     });
     const countUnder = node => node.items.length
@@ -4197,7 +5437,7 @@
         : `<span class="material-symbols-outlined text-[15px]">${escapeHtml(item.icon || 'view_in_ar')}</span>`;
       const trackLabel = item.track === 'auto' ? `auto · ${eff}` : item.track;
       return `
-        <div class="proj-card group flex items-center justify-between gap-1 p-2.5 rounded-xl glass-card-item ${active ? 'glass-card-active' : ''} cursor-pointer tactile-btn" data-proj="${escapeHtml(item.id)}" style="margin-left:${(depth || 0) * 10}px">
+        <div class="proj-card group relative flex items-center justify-between gap-1 p-2.5 rounded-xl glass-card-item ${active ? 'glass-card-active' : ''} ${(depth || 0) > 0 ? 'nested-card' : ''} cursor-pointer tactile-btn" data-proj="${escapeHtml(item.id)}" data-depth="${depth || 0}">
           <div class="flex items-center gap-2.5 min-w-0">
             <button class="tree-caret w-3.5 h-3.5 rounded flex items-center justify-center text-zinc-500 hover:text-white shrink-0" data-node="asset:${escapeHtml(item.id)}" title="${open ? 'Hide' : 'Show'} ${item.commits.length} revision${item.commits.length === 1 ? '' : 's'}">
               <span class="material-symbols-outlined text-[13px]">${open ? 'expand_more' : 'chevron_right'}</span>
@@ -4238,7 +5478,7 @@
         const picked = mine && (state.verSelection || []).includes(cm.id);
         const ok = cm.status === 'PASS';
         return `
-          <div class="tree-ver group flex items-center gap-1.5 pl-2 pr-2 py-1 rounded-lg cursor-pointer ${picked ? 'bg-white/[0.1] ring-1 ring-white/35' : 'hover:bg-white/[0.06]'}" data-proj="${escapeHtml(item.id)}" data-cid="${escapeHtml(cm.id)}" style="margin-left:${(depth + 1) * 10 + 14}px" title="${escapeHtml(cm.note || '')}">
+          <div class="tree-ver group flex items-center gap-1.5 pl-2 pr-2 py-1 rounded-lg cursor-pointer ${picked ? 'bg-white/[0.1] ring-1 ring-white/35' : 'hover:bg-white/[0.06]'}" data-proj="${escapeHtml(item.id)}" data-cid="${escapeHtml(cm.id)}" style="margin-left:14px" title="${escapeHtml(cm.note || '')}">
             <span class="w-1.5 h-1.5 rounded-full shrink-0 ${ok ? (isHead ? 'bg-emerald-400' : 'bg-emerald-400/45') : 'bg-red-400/70'}"></span>
             <span class="font-mono text-[9px] font-semibold ${isHead ? 'text-white' : 'text-zinc-300'} shrink-0">${escapeHtml(cm.tag)}</span>
             <span class="font-mono text-[8.5px] text-zinc-500 truncate flex-1">${escapeHtml(cm.note || '—')}</span>
@@ -4251,7 +5491,7 @@
       const open = treeOpen(node.path);
       const n = countUnder(node);
       return `
-        <div class="tree-folder group flex items-center gap-1.5 px-1 py-1 rounded-lg hover:bg-white/[0.05] cursor-pointer" data-path="${escapeHtml(node.path)}" style="margin-left:${depth * 10}px">
+        <div class="tree-folder group flex items-center gap-1.5 px-1 py-1 rounded-lg hover:bg-white/[0.05] cursor-pointer" data-path="${escapeHtml(node.path)}" data-depth="${depth}">
           <button class="tree-caret w-3.5 h-3.5 rounded flex items-center justify-center text-zinc-500 hover:text-white shrink-0" data-node="${escapeHtml(node.path)}">
             <span class="material-symbols-outlined text-[13px]">${open ? 'expand_more' : 'chevron_right'}</span>
           </button>
@@ -4262,12 +5502,21 @@
         </div>`;
     };
 
+    /* Nesting used to be `margin-left: depth * 10px` and nothing else, so an
+     * asset in a folder looked exactly like one outside it. The children of a
+     * folder now live inside a container with a guide rail down its left
+     * edge, which is how a file tree says "these belong to that". */
     const renderNode = (node, depth) => {
       let out = '';
       [...node.kids.keys()].sort((a, b) => a.localeCompare(b)).forEach(key => {
         const kid = node.kids.get(key);
         out += folderRow(kid, depth);
-        if (treeOpen(kid.path)) out += renderNode(kid, depth + 1);
+        if (treeOpen(kid.path)) {
+          const inner = renderNode(kid, depth + 1);
+          if (inner) {
+            out += `<div class="tree-branch" data-branch="${escapeHtml(kid.path)}">${inner}</div>`;
+          }
+        }
       });
       node.items
         .slice()
@@ -4298,6 +5547,13 @@
     renderTrackCard();
     renderFormsCard();
     renderReuse();
+    renderPalettes();
+    renderProjectChip();
+    renderLockScope();
+    renderTexIntent();
+    renderSlots();
+    buildSetupGroups();
+    renderSetupGroups();
 
     slot.querySelectorAll('.tree-caret').forEach(c => c.addEventListener('click', e => {
       e.stopPropagation();
@@ -4521,7 +5777,9 @@
     const ds = document.getElementById('diag-status');
     ds.textContent = c.errors ? `${c.errors} ERR` : '0 ERR';
     ds.className = `font-mono text-[10px] font-semibold ${c.errors ? 'text-red-400' : 'text-emerald-400'}`;
-    document.getElementById('anim-name-label').textContent = c.anim || 'static';
+    if (!Object.keys(clipsOf()).length) {
+      document.getElementById('anim-name-label').textContent = c.anim || 'static';
+    }
     document.getElementById('dock-collapsed-status').textContent = pass ? 'VERIFIED' : 'FLAGGED';
 
     // --- Quick chips, per track and mode
@@ -4932,7 +6190,26 @@
     if (tab === 'history') renderChatHistory();
     if (!silent) syncSettings({ activeRightTab: tab });
   }
-  document.querySelectorAll('.right-tab-btn').forEach(b => b.addEventListener('click', () => switchRightTab(b.dataset.tab)));
+  document.querySelectorAll('.right-tab-btn').forEach(b => b.addEventListener('click', () => {
+    switchRightTab(b.dataset.tab);
+    if (b.dataset.tab === 'prompts') renderPromptShelf();
+  }));
+
+  // The two that set the AI up for the whole chat, in order, as one paste.
+  document.getElementById('copy-setup-pair-btn').addEventListener('click', async e => {
+    const btn = e.currentTarget;
+    try {
+      const txt = await withBusy('BUILDING BOTH PROMPTS…', async () => {
+        const a = await shelfText('context');
+        const b2 = await shelfText('briefguide');
+        return `${a}\n\n${'='.repeat(70)}\n\n${b2}`;
+      });
+      await navigator.clipboard.writeText(txt);
+      btn.classList.add('ring-2', 'ring-white/60');
+      setTimeout(() => btn.classList.remove('ring-2', 'ring-white/60'), 700);
+      toast('BOTH COPIED', `${txt.length.toLocaleString()} chars — paste at the top of a new AI chat`, 'ok');
+    } catch (err) { toast('COPY FAILED', err.message, 'err'); }
+  });
 
   document.querySelectorAll('.mode-switch-btn').forEach(b => b.addEventListener('click', async () => {
     state.activeMode = b.dataset.mode;
@@ -5147,6 +6424,17 @@
   }
   function closeBranchMap() { dagModal.classList.add('hidden'); dagModal.classList.remove('flex'); }
   document.getElementById('open-branch-graph-btn').addEventListener('click', openBranchMap);
+  document.getElementById('top-project-btn').addEventListener('click', e => projectMenu(e));
+  document.getElementById('prjhist-close').addEventListener('click', () => {
+    const m = document.getElementById('prjhist-modal');
+    m.classList.add('hidden'); m.classList.remove('flex');
+  });
+  document.getElementById('prjhist-modal').addEventListener('click', e => {
+    if (e.target.id === 'prjhist-modal') {
+      e.target.classList.add('hidden'); e.target.classList.remove('flex');
+    }
+  });
+
   document.getElementById('top-branch-map-btn').addEventListener('click', openBranchMap);
   document.getElementById('left-open-map-btn').addEventListener('click', openBranchMap);
   document.getElementById('close-branch-map-btn').addEventListener('click', closeBranchMap);
@@ -5261,7 +6549,7 @@
     document.getElementById('new-design-name').focus();
   }
   function closeNewDesign() { newModal.classList.add('hidden'); newModal.classList.remove('flex'); }
-  document.getElementById('new-design-btn').addEventListener('click', () => openNewDesign());
+  document.getElementById('new-design-btn').addEventListener('click', () => openBulk());
   /* Everything that brings assets into the workspace lives behind one
    * labelled control. They belong together because they answer one question -
    * "add something" - and apart from the selection and panel controls, which
@@ -5527,6 +6815,7 @@
     else if (k === '[') pods.toggle('left');
     else if (k === ']') pods.toggle('right');
     else if (k === 'w') document.getElementById('cam-wireframe').click();
+    else if (k === 'l') document.getElementById('cam-lit').click();
     else if (k === 'r') document.getElementById('cam-autorotate').click();
     else if (k === 'g') document.getElementById('cam-floor').click();
     else if (k === 'f') document.getElementById('cam-reset').click();
@@ -5901,6 +7190,72 @@
    * starting a set, so a pasted list creates them all in one round trip.
    * ===================================================================== */
   const bulkModal = document.getElementById('bulk-modal');
+  /* ------------------------------------------------------------------
+   * CREATE — one door, two questions
+   * This was three modals: START NEW ASSET (one, brief-first), BATCH
+   * (many) and INTAKE (paste output). "I already have the output" was
+   * only reachable from an existing asset's response box, so making five
+   * assets from five finished documents meant creating a throwaway asset
+   * first. The two questions are now toggles, and INTAKE keeps only its
+   * distinct job: adding versions to the asset already open.
+   * ------------------------------------------------------------------ */
+  const createMode = { have: false, batch: true };
+
+  function renderCreateMode() {
+    document.querySelectorAll('[data-create-have]').forEach(b => {
+      const on = (b.dataset.createHave === '1') === createMode.have;
+      b.classList.toggle('bg-white', on);
+      b.classList.toggle('text-zinc-950', on);
+      b.classList.toggle('border-white', on);
+      b.classList.toggle('bg-white/[0.05]', !on);
+      b.classList.toggle('text-zinc-300', !on);
+      b.classList.toggle('border-white/[0.1]', !on);
+    });
+    document.querySelectorAll('[data-create-batch]').forEach(b => {
+      const on = (b.dataset.createBatch === '1') === createMode.batch;
+      b.classList.toggle('bg-white', on);
+      b.classList.toggle('text-zinc-950', on);
+      b.classList.toggle('border-white', on);
+      b.classList.toggle('bg-white/[0.05]', !on);
+      b.classList.toggle('text-zinc-300', !on);
+      b.classList.toggle('border-white/[0.1]', !on);
+    });
+    const lab = document.getElementById('bulk-input-label');
+    const help = document.getElementById('bulk-help');
+    const sub = document.getElementById('create-sub');
+    const box = document.getElementById('bulk-input');
+    const { have, batch } = createMode;
+    const grow = document.getElementById('bulk-group-row');
+    if (grow) {
+      grow.classList.toggle('hidden', !batch);
+      grow.classList.toggle('flex', batch);
+      const stamp = new Date().toISOString().slice(0, 10);
+      document.getElementById('bulk-group-hint').textContent =
+        document.getElementById('bulk-group').checked ? `→ batch_${stamp}_HHMM` : '';
+    }
+    if (have) {
+      lab.textContent = batch ? 'Paste every document' : 'Paste the document';
+      box.placeholder = batch
+        ? 'Paste the whole answer — as many design documents as you like, fenced or bare.\nEach one becomes its own asset, compiled on arrival.'
+        : 'Paste one design document. It becomes an asset with its first revision already compiled.';
+      help.innerHTML = 'No prompt needed and no asset to create first. Each document is compiled '
+        + 'on arrival; one that fails is still filed with its diagnostics. A document whose name '
+        + 'matches an asset you already have becomes a <span class="text-zinc-300">new version</span> of it.';
+      sub.textContent = batch ? 'Finished output, several assets at once'
+                              : 'Finished output, one asset';
+    } else {
+      lab.textContent = batch ? 'One description per line' : 'Describe the asset';
+      box.placeholder = batch
+        ? 'rusty_barrel: a dented steel barrel with three ribbed bands\nwall_tile: tileable soot-stained concrete, heavy wear\na squat four-legged sentry drone with one amber eye'
+        : 'moss_stalker: low predatory quadruped, piston legs, recessed cyan optic slit';
+      help.innerHTML = '<span class="text-zinc-300">name: description</span> names the asset; a bare line '
+        + 'is just a brief. You get an asset per line with a prompt ready to copy — paste the AI\'s answer '
+        + 'back when you have it. Bullets and dashes are stripped.';
+      sub.textContent = batch ? 'Descriptions now, prompts to copy' : 'A description, and a prompt to copy';
+    }
+    renderBulkTally();
+  }
+
   function bulkLines() {
     return document.getElementById('bulk-input').value
       .split('\n').map(l => l.trim().replace(/^[-*•]\s*/, '').trim()).filter(Boolean);
@@ -5920,32 +7275,67 @@
     const t = document.getElementById('bulk-tally');
     const btn = document.getElementById('confirm-bulk-btn');
     const hint = document.getElementById('bulk-mode-hint');
+    // Pasting source while DESCRIBE is selected used to create one asset per
+    // line of code. Read what is actually there and switch, rather than scold.
+    if (docs.length && !createMode.have) {
+      createMode.have = true;
+      if (docs.length > 1) createMode.batch = true;
+      renderCreateMode();
+      if (hint) hint.textContent = 'That is finished source, so I switched to THE OUTPUT ALREADY.';
+      return;
+    }
     if (docs.length) {
       const names = docs.map(intakeDocName);
       const known = names.filter(nm => nm && Object.values(state.projects).some(p => p.name === nm || p.id === nm));
       t.textContent = `${docs.length} design document${docs.length === 1 ? '' : 's'}`
         + ` · ${known.length} known · ${docs.length - known.length} new`;
       t.className = 'font-mono text-[9px] text-emerald-300';
+      if (btn) btn.textContent = `COMPILE & FILE ${docs.length}`;
+      return;
+    }
+    if (createMode.have) {
+      t.textContent = 'nothing pasted yet';
+      t.className = 'font-mono text-[9px] text-zinc-500';
       if (btn) btn.textContent = 'COMPILE & FILE';
-      if (hint) hint.textContent = 'That is source, not briefs — it will be compiled and filed, '
-        + 'each document on its own asset (a matching name becomes a new version).';
+      if (hint) hint.textContent = '';
       return;
     }
     const n = bulkLines().length;
     t.textContent = n === 0 ? '0 assets' : `${n} brief${n === 1 ? '' : 's'}${n > 40 ? ' — over the 40 limit' : ''}`;
     t.className = `font-mono text-[9px] ${n > 40 ? 'text-amber-300' : 'text-zinc-500'}`;
-    if (btn) btn.textContent = 'CREATE BATCH';
+    if (btn) btn.textContent = createMode.batch ? `CREATE ${n || ''}`.trim() : 'CREATE';
     if (hint) hint.textContent = '';
   }
-  function openBulk() {
+  function openBulk(opts) {
     bulkModal.classList.remove('hidden'); bulkModal.classList.add('flex');
     const sel = document.getElementById('bulk-folder-select');
     sel.innerHTML = folderOptionsHtml();
     toggleBulkFolder();
-    renderBulkTally();
+    if (opts && typeof opts.have === 'boolean') createMode.have = opts.have;
+    if (opts && typeof opts.batch === 'boolean') createMode.batch = opts.batch;
+    renderCreateMode();
     document.getElementById('bulk-input').focus();
   }
   function closeBulk() { bulkModal.classList.add('hidden'); bulkModal.classList.remove('flex'); }
+
+  document.querySelectorAll('[data-create-have]').forEach(b =>
+    b.addEventListener('click', () => {
+      createMode.have = b.dataset.createHave === '1';
+      document.getElementById('bulk-mode-hint').textContent = '';
+      renderCreateMode();
+      document.getElementById('bulk-input').focus();
+    }));
+  document.querySelectorAll('[data-create-batch]').forEach(b =>
+    b.addEventListener('click', () => {
+      createMode.batch = b.dataset.createBatch === '1';
+      renderCreateMode();
+      document.getElementById('bulk-input').focus();
+    }));
+  document.getElementById('bulk-group').addEventListener('change', () => renderCreateMode());
+  document.getElementById('open-guided-btn').addEventListener('click', () => {
+    closeBulk();
+    openNewDesign();
+  });
   function toggleBulkFolder() {
     const sel = document.getElementById('bulk-folder-select');
     const isNew = sel.value === '__new__';
@@ -5967,13 +7357,20 @@
     // Source was pasted: compile and file it rather than naming assets after
     // lines of code.
     const docs = bulkDocs();
+    if (createMode.have && !docs.length) {
+      toast('NOTHING PASTED', 'Paste the design document, or switch to A DESCRIPTION.', 'warn');
+      return;
+    }
     if (docs.length) {
       const raw = document.getElementById('bulk-input').value;
       btn.disabled = true; btn.textContent = 'COMPILING…';
+      busyOn(`COMPILING ${docs.length} DOCUMENT${docs.length === 1 ? '' : 'S'}…`);
       try {
         const boot = await apiCall('/api/intake', {
           method: 'POST',
-          body: JSON.stringify({ text: raw, mode: 'auto', folder, track, style: activeStyle() }),
+          body: JSON.stringify({ text: raw, mode: 'auto', folder, track, style: activeStyle(),
+            groupBatch: createMode.batch && document.getElementById('bulk-group').checked,
+            batchLabel: '' }),
         });
         const rows = boot.intake || [];
         const pass = rows.filter(r => r.status === 'PASS').length;
@@ -5986,16 +7383,23 @@
           + (rows.length - pass ? ` · ${rows.length - pass} with errors` : ''),
           rows.length - pass ? 'warn' : 'ok');
       } catch (err) { toast('INTAKE FAILED', err.message, 'err'); }
-      finally { btn.disabled = false; renderBulkTally(); }
+      finally { busyOff(); btn.disabled = false; renderBulkTally(); }
       return;
     }
 
     const items = bulkLines();
     if (!items.length) { toast('NOTHING TO CREATE', 'Write one description per line, or paste design documents.', 'warn'); return; }
+    if (!createMode.batch && items.length > 1) {
+      toast('THAT IS SEVERAL', `${items.length} lines — switch to BATCH, or leave one line.`, 'warn');
+      return;
+    }
     btn.disabled = true; btn.textContent = 'COMPILING…';
+    busyOn(`CREATING ${items.length} ASSET${items.length === 1 ? '' : 'S'}…`);
     try {
       const boot = await apiCall('/api/projects/bulk', {
-        method: 'POST', body: JSON.stringify({ items, track, folder }),
+        method: 'POST', body: JSON.stringify({ items, track, folder,
+          groupBatch: createMode.batch && document.getElementById('bulk-group').checked,
+          batchLabel: '' }),
       });
       const made = boot.created || [];
       document.getElementById('bulk-input').value = '';
@@ -6003,9 +7407,62 @@
       closeBulk();
       await afterMutation(boot, 'BATCH CREATED',
         `${made.length} asset${made.length === 1 ? '' : 's'}${folder ? ` in ${folder}` : ''} — each on its own main branch`);
-    } catch (err) { toast('BATCH FAILED', err.message, 'err'); }
-    finally { btn.disabled = false; btn.textContent = 'CREATE BATCH'; }
+      // The briefs are in; the prompts are what you actually need next, and
+      // fetching them one asset at a time was the slow part.
+      if (made.length > 1) offerBatchPrompts(made);
+    } catch (err) { toast('CREATE FAILED', err.message, 'err'); }
+    finally { busyOff(); btn.disabled = false; renderBulkTally(); }
   });
+
+  /* =====================================================================
+   * BATCH PROMPTS
+   * A batch of briefs leaves you with N assets each needing its own prompt,
+   * and fetching them one at a time by clicking through the list was the
+   * slow part of the whole flow. This builds all of them in one go, each
+   * under a header saying which asset it belongs to.
+   * ===================================================================== */
+  async function offerBatchPrompts(ids) {
+    const ok = await askConfirm({
+      title: `${ids.length} PROMPTS READY`,
+      body: `Copy all ${ids.length} prompts now? Each comes with a header naming its asset, `
+          + `so you can paste the lot into one chat or split them up.`,
+      confirmLabel: 'COPY ALL',
+    });
+    if (!ok) return;
+    await copyBatchPrompts(ids);
+  }
+
+  async function copyBatchPrompts(ids) {
+    try {
+      const parts = await withBusy(`BUILDING ${ids.length} PROMPTS…`, async () => {
+        const out = [];
+        for (let i = 0; i < ids.length; i++) {
+          const p = state.projects[ids[i]];
+          if (!p) continue;
+          const r = await apiCall('/api/prompt', {
+            method: 'POST',
+            body: JSON.stringify({
+              projectId: p.id, kind: resolvedTrack(p),
+              instruction: p.brief || p.lastInstruction || '',
+              style: activeStyle(),
+              styleLock: (state.lockResolved && state.lockResolved.text) || state.settings.styleLock || '',
+              styleLockOn: true,
+              textures: state.textures || [],
+            }),
+          });
+          out.push(`${'='.repeat(70)}\n`
+            + `ASSET ${i + 1} OF ${ids.length}:  ${p.name}   [${resolvedTrack(p)}]\n`
+            + `${'='.repeat(70)}\n\n${r.prompt || ''}`);
+        }
+        return out;
+      }, `${ids.length} assets`);
+      if (!parts.length) { toast('NOTHING TO COPY', 'No prompts came back.', 'warn'); return; }
+      const text = parts.join('\n\n\n');
+      await navigator.clipboard.writeText(text);
+      toast('ALL PROMPTS COPIED',
+        `${parts.length} prompt(s) · ${text.length.toLocaleString()} chars`, 'ok');
+    } catch (err) { toast('COPY FAILED', err.message, 'err'); }
+  }
 
   /* =====================================================================
    * HOVER PREVIEW
@@ -6834,6 +8291,45 @@
     } catch (err) { toast('RENAME FAILED', err.message, 'err'); }
   }
 
+  /** Put an asset on screen: open the folders above it, scroll to it, and
+   *  say where it landed. Finding something and then having to hunt for it
+   *  in the list is not finding it. */
+  function revealAsset(pid, opts) {
+    const p = state.projects[pid];
+    if (!p) return;
+    const folder = p.folder || '';
+    if (folder) {
+      const segs = folder.split('/');
+      const list = treeToggled();
+      let changed = false;
+      segs.forEach((_, i) => {
+        const key = segs.slice(0, i + 1).join('/');
+        const at = list.indexOf(key);
+        if (at >= 0) { list.splice(at, 1); changed = true; }
+      });
+      if (changed) {
+        syncSettings({ treeToggled: list.slice() });
+        renderAll();
+      }
+    }
+    // After the render, so the card exists to scroll to.
+    setTimeout(() => {
+      const card = document.querySelector(`.proj-card[data-proj="${pid}"]`);
+      if (!card) return;
+      const host = document.getElementById('project-list-slot');
+      const r = card.getBoundingClientRect();
+      const hr = host ? host.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+      const offscreen = r.top < hr.top || r.bottom > hr.bottom;
+      if (offscreen) card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      if (offscreen || (opts && opts.flash)) {
+        card.classList.remove('reveal-flash');
+        void card.offsetWidth;                 // restart the animation
+        card.classList.add('reveal-flash');
+        setTimeout(() => card.classList.remove('reveal-flash'), 1600);
+      }
+    }, 60);
+  }
+
   function openAsset(pid) {
     if (!state.projects[pid]) return;
     state.activeProjectId = pid;
@@ -6843,7 +8339,8 @@
     hideNext();
     syncSettings({ activeProjectId: pid });
     state.lastInstruction = loadInstruction();
-    renderAll(); rebuildStage(); refreshPromptPreview();
+    renderAll(); loadPalettes(); loadAssetMeta(); rebuildStage(); refreshPromptPreview();
+    revealAsset(pid);
   }
 
   /** Shared by every export path, so the version scope means one thing. */
@@ -7399,6 +8896,9 @@
     }
     const sameAsset = h.pid === (getActiveProject() || {}).id;
     if (!sameAsset) openAsset(h.pid);
+    // A search result always flashes, even if it was already the open asset:
+    // the point of the search was to be shown where the thing is.
+    revealAsset(h.pid, { flash: true });
     if (h.cid) {
       const jump = () => {
         checkoutCommit(h.cid);
@@ -7487,6 +8987,7 @@
    * ===================================================================== */
   const askModal = document.getElementById('ask-modal');
   let askResolve = null;
+  let askField = null;      // the input or the textarea, whichever is showing
 
   function askClose(value) {
     askModal.classList.add('hidden');
@@ -7508,16 +9009,23 @@
     pre.textContent = o.prefix || '';
     pre.classList.toggle('hidden', !o.prefix);
     pre.classList.toggle('flex', !!o.prefix);
-    const input = document.getElementById('ask-input');
+    // A palette body or a style text is many lines; a name is one. Same
+    // dialog either way, so there is still only one way to be asked for text.
+    const area = document.getElementById('ask-area');
+    const single = document.getElementById('ask-input').parentElement;
+    const input = o.multiline ? area : document.getElementById('ask-input');
+    area.classList.toggle('hidden', !o.multiline);
+    single.classList.toggle('hidden', !!o.multiline);
     input.value = o.value || '';
     input.placeholder = o.placeholder || '';
     document.getElementById('ask-field').classList.remove('hidden');
-    document.getElementById('ask-ok').textContent = o.confirmLabel || 'RENAME';
+    document.getElementById('ask-ok').textContent = o.confirmLabel || (o.multiline ? 'SAVE' : 'RENAME');
     document.getElementById('ask-ok').className = 'px-5 py-2 rounded-full bg-white hover:bg-zinc-100 '
       + 'text-zinc-950 font-mono text-xs font-bold shadow-glow-white tactile-btn';
     askModal.classList.remove('hidden');
     askModal.classList.add('flex');
-    setTimeout(() => { input.focus(); input.select(); }, 20);
+    setTimeout(() => { input.focus(); if (!o.multiline) input.select(); }, 20);
+    askField = input;
     return new Promise(res => { askResolve = res; });
   }
 
@@ -7544,7 +9052,14 @@
   document.getElementById('ask-cancel').addEventListener('click', () => askClose(null));
   document.getElementById('ask-ok').addEventListener('click', () => {
     const field = document.getElementById('ask-field');
-    askClose(field.classList.contains('hidden') ? true : document.getElementById('ask-input').value);
+    if (field.classList.contains('hidden')) return askClose(true);
+    askClose((askField || document.getElementById('ask-input')).value);
+  });
+  // Enter inside a multi-line body is a newline, not a submit.
+  document.getElementById('ask-area').addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Escape') { e.preventDefault(); askClose(null); }
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); askClose(e.target.value); }
   });
   askModal.addEventListener('click', e => { if (e.target === askModal) askClose(null); });
   document.getElementById('ask-input').addEventListener('keydown', e => {
@@ -7972,6 +9487,960 @@
     });
   })();
 
+  /* =====================================================================
+   * ANIMATE AN EXISTING REVISION
+   * Asking for geometry and clips in one answer makes the model re-emit
+   * every box to add a wave - expensive, and it routinely damages a mesh
+   * that was already approved. Here the clips come back on their own and
+   * are merged into the revision you already have.
+   *
+   * The clip list is seeded from the brief: a description that ends
+   * "Animations: idle, run, hit" already said what it wants, so there is
+   * nothing to retype.
+   * ===================================================================== */
+  function clipsFromBrief(text) {
+    // The line sits wherever the model put it - usually at the end of a
+    // paragraph, mid-sentence ("...in dark undergrowth. Animations: `idle`,
+    // `run`.") - so this is deliberately not anchored to a line start.
+    const m = /animations?\s*[:\-]\s*([^\n]+)/i.exec(String(text || ''));
+    if (!m) return [];
+    return m[1].split(/[,;]|\sand\s/)
+      .map(x => x.replace(/[`'"*]/g, '').replace(/[.\s]+$/, '').trim())
+      .filter(x => x && x.length < 32 && /^[A-Za-z0-9_][A-Za-z0-9_\- ]*$/.test(x))
+      .map(x => x.replace(/\s+/g, '_').toLowerCase());
+  }
+
+  (function wireAnimate() {
+    const modal = document.getElementById('animate-modal');
+    if (!modal) return;
+    const input = document.getElementById('animate-input');
+    const clipsEl = document.getElementById('animate-clips');
+    const report = document.getElementById('animate-report');
+    const tally = document.getElementById('animate-tally');
+
+    const close = () => { modal.classList.add('hidden'); modal.classList.remove('flex'); };
+    const show = html => { report.innerHTML = html; report.classList.remove('hidden'); };
+
+    /** Count the clips in the pasted text, the same way the server will. */
+    function pastedClips() {
+      let body = input.value || '';
+      const fence = /```[A-Za-z]*\s*([\s\S]*?)```/.exec(body);
+      if (fence) body = fence[1];
+      const out = [];
+      body.split('\n').forEach(l => {
+        const t = l.trim();
+        if (/^animation\b/i.test(t)) {
+          const q = /"([^"]+)"/.exec(t);
+          out.push(q ? q[1] : (t.split(/\s+/)[1] || '?'));
+        }
+      });
+      return out;
+    }
+
+    function renderTally() {
+      const c = pastedClips();
+      tally.textContent = c.length ? `${c.length} clip(s): ${c.join(', ')}` : 'no clips pasted';
+      tally.className = `font-mono text-[9px] ${c.length ? 'text-emerald-300' : 'text-zinc-500'}`;
+    }
+    input.addEventListener('input', renderTally);
+
+    async function open() {
+      const p = getActiveProject();
+      if (!p) { toast('NO ASSET OPEN', 'Open the asset you want to animate first.', 'warn'); return; }
+      if (!requireServer()) return;
+      report.classList.add('hidden');
+      input.value = '';
+      renderTally();
+      document.getElementById('animate-rig').textContent = `${p.name} · ${resolvedTrack(p)}`;
+      const seeded = clipsFromBrief(state.lastInstruction || '')
+        .concat(clipsFromBrief((getActiveCommit() || {}).note || ''));
+      const uniq = [...new Set(seeded)];
+      clipsEl.value = uniq.join(', ');
+      document.getElementById('animate-clip-hint').textContent = uniq.length
+        ? 'Taken from the brief — edit if you want different clips.'
+        : 'Leave blank for idle, walk, attack, hit, death.';
+      modal.classList.remove('hidden'); modal.classList.add('flex');
+    }
+
+    document.getElementById('open-animate-btn').addEventListener('click', open);
+    document.getElementById('animate-close').addEventListener('click', close);
+    document.getElementById('animate-cancel').addEventListener('click', close);
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+
+    document.getElementById('animate-copy').addEventListener('click', async e => {
+      const p = getActiveProject(); if (!p) return;
+      const btn = e.currentTarget;
+      try {
+        const r = await withBusy('BUILDING THE CLIP PROMPT…', () => apiCall('/api/animate/prompt', {
+          method: 'POST',
+          body: JSON.stringify({ projectId: p.id, clips: clipsEl.value }),
+        }));
+        await navigator.clipboard.writeText(r.prompt || '');
+        btn.classList.add('bg-emerald-400/20');
+        setTimeout(() => btn.classList.remove('bg-emerald-400/20'), 700);
+        show(`<div class="text-zinc-200">Prompt copied — ${(r.bones || []).length} bone(s) named in it.</div>`
+          + `<div class="text-zinc-500 mt-1">${(r.bones || []).map(escapeHtml).join(', ')}</div>`
+          + ((r.existing || []).length ? `<div class="text-zinc-500 mt-1">already on this rig: ${(r.existing || []).map(escapeHtml).join(', ')}</div>` : ''));
+        toast('CLIPS PROMPT COPIED', 'It names the real bones, so the AI cannot invent one', 'ok');
+      } catch (err) {
+        show(`<div class="text-red-300">${escapeHtml(err.message)}</div>`);
+      }
+    });
+
+    document.getElementById('animate-apply').addEventListener('click', async () => {
+      const p = getActiveProject(); if (!p) return;
+      const got = pastedClips();
+      if (!got.length) {
+        show('<div class="text-red-300">No animation blocks in that text — each clip starts with '
+          + '<span class="text-zinc-300">animation "name"</span>.</div>');
+        return;
+      }
+      try {
+        const boot = await withBusy(`MERGING ${got.length} CLIP${got.length === 1 ? '' : 'S'}…`, () =>
+          apiCall('/api/animate/apply', {
+            method: 'POST',
+            body: JSON.stringify({
+              projectId: p.id, text: input.value,
+              style: activeStyle(), styleLock: state.settings.styleLock || '',
+            }),
+          }));
+        applyBootstrapState(boot);
+        const hc = getActiveCommit();
+        input.value = ''; renderTally(); close();
+        renderAll(); await rebuildStage(); await refreshPromptPreview();
+        if (hc && hc.status === 'PASS') {
+          toast('CLIPS MERGED', `${got.join(', ')} — geometry untouched`, 'ok');
+        } else {
+          toast('MERGED WITH ERRORS', 'See the report panel — the geometry was still preserved.', 'warn');
+        }
+      } catch (err) {
+        show(`<div class="text-red-300">${escapeHtml(err.message)}</div>`);
+      }
+    });
+  })();
+
+  /* =====================================================================
+   * SETUP, IN GROUPS
+   * This panel was eight unrelated cards in one flat scroll - the AI
+   * briefing directly above the colour palette directly above the block
+   * allow-list - so finding anything meant reading all of it. The cards
+   * themselves were fine; what was missing was any statement of what each
+   * one governs. They are collected here by exactly that, and collapse,
+   * so the panel opens as four lines rather than a wall.
+   *
+   * Grouping happens by moving the existing cards at runtime rather than
+   * by rewriting the markup, so every control keeps its id, its listeners
+   * and its render function.
+   * =================================================================== */
+  const SETUP_GROUPS = [
+    { id: 'ai', label: 'THE AI', icon: 'smart_toy',
+      hint: 'Set once per chat. The same whatever asset is open.',
+      cards: ['agent-card'] },
+    { id: 'art', label: 'ART DIRECTION', icon: 'palette',
+      hint: 'Applies to everything in this project.',
+      cards: ['palette-card', 'lock-card', 'style-spec-card', 'shape-card'] },
+    { id: 'asset', label: 'THIS ASSET', icon: 'category',
+      hint: 'Switchable per asset.',
+      cards: ['track-card', 'texintent-card', 'slots-card', 'forms-card'] },
+    { id: 'bulk', label: 'LIBRARY & BULK', icon: 'inventory_2',
+      hint: 'Reusable parts, and picking a set by name.',
+      cards: ['reuse-card', 'jsonpick-card'] },
+  ];
+
+  function setupGroupsOpen() {
+    const raw = state.settings.setupGroups;
+    if (raw && typeof raw === 'object') return raw;
+    return { ai: false, art: true, asset: true, bulk: true };
+  }
+
+  function buildSetupGroups() {
+    const host = document.getElementById('setup-scroll');
+    if (!host || host.dataset.grouped === '1') return;
+    const open = setupGroupsOpen();
+    SETUP_GROUPS.forEach(g => {
+      const wrap = document.createElement('div');
+      wrap.className = 'rounded-2xl border border-white/[0.07] bg-black/20 overflow-hidden';
+      wrap.id = `setup-group-${g.id}`;
+      wrap.innerHTML = `
+        <button class="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/[0.04] tactile-btn text-left" data-setup-toggle="${g.id}">
+          <span class="material-symbols-outlined text-[14px] text-zinc-400">${g.icon}</span>
+          <span class="font-mono text-[9.5px] font-bold text-white uppercase tracking-wider">${g.label}</span>
+          <span class="font-mono text-[8px] text-zinc-500 truncate hidden sm:inline">${g.hint}</span>
+          <div class="flex-1"></div>
+          <span class="font-mono text-[8px] text-zinc-600" data-setup-count="${g.id}"></span>
+          <span class="material-symbols-outlined text-[16px] text-zinc-500 transition-transform" data-setup-caret="${g.id}">expand_more</span>
+        </button>
+        <div class="px-2 pb-2 space-y-2" data-setup-body="${g.id}"></div>`;
+      host.appendChild(wrap);
+      const body = wrap.querySelector(`[data-setup-body="${g.id}"]`);
+      g.cards.forEach(cid => {
+        const el = document.getElementById(cid);
+        if (el) body.appendChild(el);          // moves it, listeners intact
+      });
+    });
+    host.dataset.grouped = '1';
+    host.querySelectorAll('[data-setup-toggle]').forEach(btn =>
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.setupToggle;
+        const now = setupGroupsOpen();
+        now[id] = !now[id];
+        state.settings.setupGroups = now;
+        syncSettings({ setupGroups: now });
+        renderSetupGroups();
+      }));
+    renderSetupGroups();
+  }
+
+  /** Open/closed, and how many controls each group is currently hiding. */
+  function renderSetupGroups() {
+    const open = setupGroupsOpen();
+    SETUP_GROUPS.forEach(g => {
+      const body = document.querySelector(`[data-setup-body="${g.id}"]`);
+      const caret = document.querySelector(`[data-setup-caret="${g.id}"]`);
+      const count = document.querySelector(`[data-setup-count="${g.id}"]`);
+      if (!body) return;
+      const live = g.cards
+        .map(c => document.getElementById(c))
+        .filter(el => el && !el.classList.contains('hidden'));
+      body.classList.toggle('hidden', !open[g.id]);
+      if (caret) caret.style.transform = open[g.id] ? 'rotate(180deg)' : 'none';
+      if (count) count.textContent = open[g.id] ? '' : `${live.length}`;
+      // A group whose every card is hidden for this track is itself noise.
+      const wrap = document.getElementById(`setup-group-${g.id}`);
+      if (wrap) wrap.classList.toggle('hidden', live.length === 0);
+    });
+  }
+
+  /* =====================================================================
+   * REGION PALETTES
+   * A project is not one palette. The briefs name regions - Overgrown
+   * Shelf, Ashen Foundry Basin - each with its own colours off the same
+   * locked art style. A variant is a named style text; the active one is
+   * layered onto the project lock, so a region overrides without having
+   * to restate the whole style. Named colours inside it reach the prompt
+   * as an explicit name -> hex table.
+   * =================================================================== */
+  function activeVariantLock() {
+    const v = (state.palettes || []).find(x => x.active);
+    if (!v) return '';
+    return `REGION / VARIANT: ${v.name}\n` + (v.body || '');
+  }
+
+  /** Regions are workspace-wide, like the Style Lock they branch off: STRATA
+   *  has an Overgrown Shelf and an Ashen Foundry Basin, and assets belong to
+   *  one. Scoping them per asset would mean re-entering the same palette for
+   *  every mob in a region. */
+  const PALETTE_SCOPE = '';
+
+  async function loadPalettes() {
+    if (!API.LIVE) { state.palettes = []; renderPalettes(); return; }
+    try {
+      const r = await apiCall('/api/palettes', {
+        method: 'POST', body: JSON.stringify({ projectId: PALETTE_SCOPE }),
+      });
+      state.palettes = r.palettes || [];
+    } catch { state.palettes = []; }
+    renderPalettes();
+  }
+
+  function renderPalettes() {
+    const list = document.getElementById('palette-list');
+    const count = document.getElementById('palette-count');
+    if (!list) return;
+    const rows = state.palettes || [];
+    const act = rows.find(r => r.active);
+    if (count) {
+      count.textContent = rows.length
+        ? (act ? `${act.name} active` : `${rows.length}, none active`)
+        : 'none yet';
+    }
+    if (!rows.length) {
+      list.innerHTML = `<div class="px-2.5 py-2 rounded-xl bg-black/30 border border-dashed border-white/[0.09] font-mono text-[8.5px] text-zinc-500 text-center">
+        No regions yet — the Style Lock applies on its own.</div>`;
+      return;
+    }
+    list.innerHTML = rows.map(v => {
+      const chips = (v.colors || []).slice(0, 10).map(c =>
+        `<span class="w-3 h-3 rounded-[3px] border border-white/20" style="background:${escapeHtml(c.hex)}" title="${escapeHtml(c.name)} ${escapeHtml(c.hex)}"></span>`).join('');
+      const more = (v.colors || []).length > 10 ? `<span class="font-mono text-[8px] text-zinc-500">+${v.colors.length - 10}</span>` : '';
+      return `<div class="px-2.5 py-2 rounded-xl border ${v.active ? 'border-emerald-400/50 bg-emerald-400/[0.07]' : 'border-white/[0.08] bg-black/30'} flex flex-col gap-1.5">
+        <div class="flex items-center gap-1.5 min-w-0">
+          <button class="font-mono text-[9.5px] font-semibold ${v.active ? 'text-emerald-200' : 'text-zinc-200 hover:text-white'} truncate text-left flex-1" data-pal-activate="${escapeHtml(v.id)}" title="${v.active ? 'Active' : 'Make this the active region'}">${escapeHtml(v.name)}</button>
+          <span class="font-mono text-[8px] text-zinc-500 shrink-0">${(v.colors || []).length} colours${v.inherit ? '' : ' · standalone'}</span>
+          <button class="p-0.5 rounded hover:bg-white/10 tactile-btn shrink-0" data-pal-edit="${escapeHtml(v.id)}" title="Edit"><span class="material-symbols-outlined text-[13px] text-zinc-400">edit</span></button>
+          <button class="p-0.5 rounded hover:bg-white/10 tactile-btn shrink-0" data-pal-del="${escapeHtml(v.id)}" title="Delete"><span class="material-symbols-outlined text-[13px] text-zinc-500">delete</span></button>
+        </div>
+        <div class="flex items-center gap-1 flex-wrap">${chips}${more}</div>
+      </div>`;
+    }).join('');
+
+    list.querySelectorAll('[data-pal-activate]').forEach(b =>
+      b.addEventListener('click', () => activatePalette(b.dataset.palActivate)));
+    list.querySelectorAll('[data-pal-edit]').forEach(b =>
+      b.addEventListener('click', () => editPalette(b.dataset.palEdit)));
+    list.querySelectorAll('[data-pal-del]').forEach(b =>
+      b.addEventListener('click', () => removePalette(b.dataset.palDel)));
+  }
+
+  async function activatePalette(id) {
+    try {
+      const r = await apiCall('/api/palettes/activate', {
+        method: 'POST', body: JSON.stringify({ projectId: PALETTE_SCOPE, id }),
+      });
+      state.palettes = r.palettes || [];
+      renderPalettes();
+      await refreshPromptPreview();
+      const v = state.palettes.find(x => x.active);
+      toast('REGION ACTIVE', v ? `${v.name} — ${(v.colors || []).length} named colours in the prompt` : 'Project lock only', 'ok');
+    } catch (err) { toast('COULD NOT SWITCH', err.message, 'err'); }
+  }
+
+  async function editPalette(id) {
+    const v = (state.palettes || []).find(x => x.id === id);
+    if (!v) return;
+    const body = await askText({
+      title: `REGION — ${v.name}`,
+      label: 'Palette and rules for this region',
+      help: 'Name each colour, e.g.  shadow #22252A  — the names reach the AI as a table.',
+      value: v.body || '', multiline: true,
+    });
+    if (body === null) return;
+    await savePalette({ id, projectId: PALETTE_SCOPE, name: v.name, body, inherit: v.inherit });
+  }
+
+  async function removePalette(id) {
+    const v = (state.palettes || []).find(x => x.id === id);
+    if (!v) return;
+    if (!await askConfirm({ title: 'DELETE REGION', danger: true,
+      body: `Delete “${v.name}”? The Style Lock it branches off is not touched.`,
+      confirmLabel: 'DELETE' })) return;
+    try {
+      const r = await apiCall('/api/palettes/delete', {
+        method: 'POST', body: JSON.stringify({ projectId: PALETTE_SCOPE, id }),
+      });
+      state.palettes = r.palettes || [];
+      renderPalettes();
+      await refreshPromptPreview();
+    } catch (err) { toast('DELETE FAILED', err.message, 'err'); }
+  }
+
+  async function savePalette(spec) {
+    try {
+      const r = await apiCall('/api/palettes/save', {
+        method: 'POST', body: JSON.stringify({ ...spec, activate: !!spec.activate }),
+      });
+      state.palettes = r.palettes || [];
+      renderPalettes();
+      await refreshPromptPreview();
+      const n = (state.palettes.find(x => x.id === r.id) || {}).colors || [];
+      toast('REGION SAVED', `${spec.name} — ${n.length} named colour(s) found`, 'ok');
+    } catch (err) { toast('SAVE FAILED', err.message, 'err'); }
+  }
+
+  async function newPalette() {
+    const name = await askText({
+      title: 'NEW REGION', label: 'Region name',
+      help: 'e.g. Overgrown Shelf, or Ashen Foundry Basin', value: '',
+    });
+    if (!name || !name.trim()) return;
+    const body = await askText({
+      title: `REGION — ${name.trim()}`,
+      label: 'Palette and rules for this region',
+      help: 'Name each colour, e.g.  shadow #22252A  — the names reach the AI as a table.',
+      value: '', multiline: true,
+    });
+    if (body === null) return;
+    await savePalette({ projectId: PALETTE_SCOPE, name: name.trim(), body, inherit: true, activate: true });
+  }
+
+  // ANIM only means something on a rigged track.
+  document.getElementById('ctx-clips').addEventListener('change', () => refreshPromptPreview());
+  document.getElementById('palette-new-btn').addEventListener('click', newPalette);
+  document.getElementById('palette-off-btn').addEventListener('click', () => activatePalette(''));
+
+  /* =====================================================================
+   * THE PROMPT SHELF
+   * One list of every prompt, in the order you actually use them, saying
+   * plainly which are set once and which are rebuilt for the asset in
+   * front of you. The two that depend on what is open stay where they are
+   * - a clips prompt has to know the rig - so they are listed here with a
+   * button that takes you to them rather than copied blind.
+   * =================================================================== */
+  const PROMPT_SHELF = [
+    { id: 'context', step: 1, kind: 'once', title: 'THE BRIEFING',
+      what: 'What this pipeline is, why you write a document instead of geometry, the four tracks, and what files come out.',
+      when: 'First thing in a new AI chat.',
+      get: () => apiCall('/api/context').then(r => r.context) },
+    { id: 'briefguide', step: 2, kind: 'once', title: 'HOW TO WRITE BRIEFS',
+      what: 'How to describe an asset so it compiles: silhouette first, one scale number, palette names, the Animations: line, what to leave out.',
+      when: 'Straight after the briefing. This is the one that makes its descriptions usable.',
+      get: () => apiCall('/api/briefguide').then(r => r.prompt),
+      backLabel: 'PASTE THE BRIEFS',
+      back: () => openBulk({ have: false, batch: true }) },
+    { id: 'lighting', step: 3, kind: 'once', title: 'LIGHTING & UNITS',
+      what: 'The real measurements — 1 cell = 1 block = 1 m = 16 voxels — the 0-15 light scale, what blocks light, and how to pick a brightness from the distance you want covered.',
+      when: 'Before asking for any structure that needs to be lit.',
+      get: () => apiCall('/api/lightguide').then(r => r.prompt) },
+    { id: 'selfcheck', step: 4, kind: 'once', title: 'SELF-CHECK SETUP',
+      what: 'Hands the AI the compiler so it can check and fix its own work before answering.',
+      when: 'Only for a model with a sandbox. Upload the files in selfcheck/ with it.',
+      get: () => {
+        const p = getActiveProject();
+        return apiCall('/api/selfcheck/prompt', {
+          method: 'POST',
+          body: JSON.stringify({ projectId: p ? p.id : '', kind: p ? resolvedTrack(p) : 'model',
+            style: activeStyle(), size: (state.settings.targetSize || '').trim() }),
+        }).then(r => r.prompt);
+      } },
+    { id: 'blockplan', step: 5, kind: 'each', title: 'PLAN THE BLOCKS',
+      what: 'Asks what it wants to build WITH before it builds: which of the twelve forms, and which materials bound to which textures. The answer becomes the allow-list and is stated back in every build prompt.',
+      when: 'Before the first build of a structure, and whenever the palette should change.',
+      goto: () => openBlockPlan(),
+      backLabel: 'PASTE THE PLAN',
+      back: () => openBlockPlan() },
+    { id: 'asset', step: 6, kind: 'each', title: 'THE ASSET PROMPT',
+      what: 'The real one: grammar, palette table, shape budget, worked example, output contract, plus this asset\'s brief and last compiler report.',
+      when: 'Every round, for the asset you have open.',
+      goto: () => { switchRightTab('workbench'); toast('IN BUILD, STEP 2', 'The big COPY button is the asset prompt', 'ok'); },
+      backLabel: 'PASTE THE DOCUMENT',
+      back: () => {
+        switchRightTab('workbench');
+        const box = document.getElementById('ai-cassette-input');
+        box.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        box.focus();
+        box.classList.add('ring-2', 'ring-emerald-400/60');
+        setTimeout(() => box.classList.remove('ring-2', 'ring-emerald-400/60'), 1400);
+      } },
+    { id: 'animate', step: 7, kind: 'each', title: 'ANIMATE THIS REVISION',
+      what: 'Asks for animation clips only, naming the real bones and pivots. The approved geometry is never re-sent.',
+      when: 'Once a mesh compiles and you want it to move.',
+      goto: () => { switchRightTab('workbench'); document.getElementById('open-animate-btn').click(); },
+      backLabel: 'PASTE THE CLIPS',
+      back: () => { switchRightTab('workbench'); document.getElementById('open-animate-btn').click(); } },
+    { id: 'jsonpick', step: 8, kind: 'once', title: 'PICK BY JSON',
+      what: 'The JSON shape for selecting or downloading a set of assets by name, with your real asset names listed so it cannot invent one.',
+      when: 'When you want the AI to choose which assets to export.',
+      get: async () => jsonPickPrompt(),
+      backLabel: 'PASTE THE JSON',
+      back: () => document.getElementById('open-jsonpick-btn').click() },
+    { id: 'rename', step: 9, kind: 'once', title: 'BULK RENAME JSON',
+      what: 'The JSON shape for renaming many assets or revisions at once.',
+      when: 'Before asking for a batch of new names.',
+      get: () => apiCall('/api/rename/prompt', {
+        method: 'POST', body: JSON.stringify({ scope: 'assets' }),
+      }).then(r => r.prompt || r.brief),
+      backLabel: 'PASTE THE JSON',
+      back: () => openRename('assets') },
+  ];
+
+  function renderPromptShelf() {
+    const host = document.getElementById('prompt-shelf');
+    if (!host) return;
+    host.innerHTML = PROMPT_SHELF.map(p => {
+      const badge = p.kind === 'once'
+        ? '<span class="font-mono text-[7.5px] px-1.5 py-0.5 rounded-full bg-emerald-400/15 text-emerald-300 border border-emerald-400/25">SET ONCE</span>'
+        : '<span class="font-mono text-[7.5px] px-1.5 py-0.5 rounded-full bg-sky-400/15 text-sky-300 border border-sky-400/25">PER ASSET</span>';
+      const action = p.goto
+        ? `<button class="px-2.5 py-1 rounded-full bg-white/[0.07] hover:bg-white/[0.16] border border-white/[0.08] font-mono text-[8.5px] font-semibold text-zinc-200 tactile-btn" data-prompt-goto="${p.id}">TAKE ME THERE</button>`
+        : `<button class="px-2.5 py-1 rounded-full bg-white/[0.07] hover:bg-white/[0.16] border border-white/[0.08] font-mono text-[8.5px] font-semibold text-zinc-200 tactile-btn" data-prompt-copy="${p.id}">COPY</button>`;
+      const peek = p.get
+        ? `<button class="px-2 py-1 rounded-full hover:bg-white/10 font-mono text-[8.5px] text-zinc-400 hover:text-zinc-200 tactile-btn" data-prompt-peek="${p.id}">READ</button>`
+        : '';
+      // A prompt you send out has an answer that comes back. Without this the
+      // row dead-ended: you copied the JSON prompt and then had to go hunting
+      // through SETUP for the box that accepts the reply.
+      const back = p.back
+        ? `<button class="px-2.5 py-1 rounded-full bg-emerald-400/15 hover:bg-emerald-400/25 border border-emerald-400/30 font-mono text-[8.5px] font-semibold text-emerald-200 tactile-btn" data-prompt-back="${p.id}">${escapeHtml(p.backLabel || 'PASTE RESULT')} →</button>`
+        : '';
+      return `<div class="p-3 glass-card-item rounded-2xl flex flex-col gap-1.5">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="w-4 h-4 rounded-full bg-white/15 border border-white/20 font-mono text-[8px] font-bold text-zinc-100 flex items-center justify-center shrink-0">${p.step}</span>
+          <span class="font-mono text-[10px] font-semibold text-white uppercase tracking-wide truncate">${escapeHtml(p.title)}</span>
+          ${badge}
+        </div>
+        <p class="font-mono text-[8.5px] text-zinc-400 leading-snug">${escapeHtml(p.what)}</p>
+        <p class="font-mono text-[8px] text-zinc-500 leading-snug"><span class="text-zinc-400">When:</span> ${escapeHtml(p.when)}</p>
+        <div class="flex items-center gap-1.5 pt-0.5 flex-wrap">
+          ${action}${peek}${back}
+          <div class="flex-1"></div>
+          <span class="font-mono text-[8px] text-zinc-600" data-prompt-len="${p.id}"></span>
+        </div>
+        <pre class="hidden max-h-56 overflow-auto rounded-xl bg-black/50 border border-white/[0.09] p-2.5 font-mono text-[8.5px] text-zinc-300 whitespace-pre-wrap" data-prompt-body="${p.id}"></pre>
+      </div>`;
+    }).join('');
+
+    host.querySelectorAll('[data-prompt-copy]').forEach(b =>
+      b.addEventListener('click', () => copyShelfPrompt(b.dataset.promptCopy, b)));
+    host.querySelectorAll('[data-prompt-goto]').forEach(b =>
+      b.addEventListener('click', () => {
+        const p = PROMPT_SHELF.find(x => x.id === b.dataset.promptGoto);
+        if (p && p.goto) p.goto();
+      }));
+    host.querySelectorAll('[data-prompt-peek]').forEach(b =>
+      b.addEventListener('click', () => peekShelfPrompt(b.dataset.promptPeek, b)));
+    host.querySelectorAll('[data-prompt-back]').forEach(b =>
+      b.addEventListener('click', () => {
+        const p = PROMPT_SHELF.find(x => x.id === b.dataset.promptBack);
+        if (p && p.back) p.back();
+      }));
+  }
+
+  async function shelfText(id) {
+    const p = PROMPT_SHELF.find(x => x.id === id);
+    if (!p || !p.get) return '';
+    if (!requireServer()) return '';
+    return (await p.get()) || '';
+  }
+
+  async function copyShelfPrompt(id, btn) {
+    try {
+      const txt = await withBusy('BUILDING THE PROMPT…', () => shelfText(id));
+      if (!txt) return;
+      await navigator.clipboard.writeText(txt);
+      btn.classList.add('bg-emerald-400/20');
+      setTimeout(() => btn.classList.remove('bg-emerald-400/20'), 700);
+      const len = document.querySelector(`[data-prompt-len="${id}"]`);
+      if (len) len.textContent = `${txt.length.toLocaleString()} chars copied`;
+      toast('COPIED', (PROMPT_SHELF.find(x => x.id === id) || {}).title || 'Prompt', 'ok');
+    } catch (err) { toast('COPY FAILED', err.message, 'err'); }
+  }
+
+  async function peekShelfPrompt(id, btn) {
+    const pre = document.querySelector(`[data-prompt-body="${id}"]`);
+    if (!pre) return;
+    if (!pre.classList.contains('hidden')) { pre.classList.add('hidden'); btn.textContent = 'READ'; return; }
+    try {
+      const txt = await withBusy('BUILDING THE PROMPT…', () => shelfText(id));
+      pre.textContent = txt || '(empty)';
+      pre.classList.remove('hidden');
+      btn.textContent = 'HIDE';
+      const len = document.querySelector(`[data-prompt-len="${id}"]`);
+      if (len) len.textContent = `${(txt || '').length.toLocaleString()} chars`;
+    } catch (err) { toast('COULD NOT BUILD', err.message, 'err'); }
+  }
+
+  /* =====================================================================
+   * TEXTURE TARGETS AND MATERIAL SLOTS
+   * Not every texture is a block. The target decides what a correct
+   * texture is - a cube face has to tile both ways, a prop wrap only
+   * around, a model panel not at all - so it is a constraint in the
+   * prompt rather than a label.
+   *
+   * And a model has many boxes but few distinct colours, while a prop is
+   * one solid. Binding a texture to a COLOUR rather than to a part is
+   * what makes "which part of the model" answerable: the colour is
+   * already the material slot, and the region palette already names it.
+   * =================================================================== */
+  const TEX_TARGETS = [
+    ['block', 'A BLOCK FACE', 'tiles both ways'],
+    ['prop', 'A PROP SURFACE', 'tiles one way'],
+    ['model', 'A MODEL PANEL', 'never repeats'],
+  ];
+
+  /** Both of these follow the open asset, so they load together. */
+  async function loadAssetMeta() {
+    await loadLocks();
+    await loadTextureIntent();
+    await loadSlots();
+    await loadBlockPlan();
+    renderTexIntent();
+    renderSlots();
+  }
+
+  async function loadTextureIntent() {
+    const p = getActiveProject();
+    if (!p || !API.LIVE || resolvedTrack(p) !== 'texture') { state.texIntent = null; return; }
+    try {
+      const r = await apiCall('/api/texture/intent', {
+        method: 'POST', body: JSON.stringify({ projectId: p.id }),
+      });
+      state.texIntent = r.intent || null;
+    } catch { state.texIntent = null; }
+  }
+
+  async function loadSlots() {
+    const p = getActiveProject();
+    if (!p || !API.LIVE || !['model', 'prop', 'structure'].includes(resolvedTrack(p))) {
+      state.slotInfo = null; return;
+    }
+    try {
+      const r = await apiCall('/api/slots', {
+        method: 'POST', body: JSON.stringify({ projectId: p.id }),
+      });
+      state.slotInfo = r;
+    } catch { state.slotInfo = null; }
+    try {
+      const t = await apiCall('/api/textures/usable', { method: 'POST', body: JSON.stringify({}) });
+      state.textureList = t.textures || [];
+    } catch { state.textureList = []; }
+  }
+
+  function renderTexIntent() {
+    const card = document.getElementById('texintent-card');
+    if (!card) return;
+    const it = state.texIntent;
+    if (!it) { card.classList.add('hidden'); card.classList.remove('flex'); return; }
+    card.classList.remove('hidden'); card.classList.add('flex');
+    const row = document.getElementById('texintent-row');
+    row.innerHTML = TEX_TARGETS.map(([id, label, hint]) => {
+      const on = it.target === id;
+      return `<button class="flex-1 px-2 py-1.5 rounded-xl font-mono text-[8.5px] font-semibold tactile-btn border text-left ${
+        on ? 'bg-white text-zinc-950 border-white' : 'bg-white/[0.05] text-zinc-300 border-white/[0.1]'
+      }" data-textarget="${id}"><div>${label}</div><div class="${on ? 'text-zinc-700' : 'text-zinc-500'} font-normal">${hint}</div></button>`;
+    }).join('');
+    row.querySelectorAll('[data-textarget]').forEach(b =>
+      b.addEventListener('click', () => setTexIntent({ target: b.dataset.textarget })));
+    const wrapRow = document.getElementById('texintent-wrap-row');
+    wrapRow.classList.toggle('hidden', it.target !== 'prop');
+    wrapRow.classList.toggle('flex', it.target === 'prop');
+    wrapRow.querySelectorAll('[data-texwrap]').forEach(b => {
+      const on = (it.wrap || 'around') === b.dataset.texwrap;
+      b.className = `px-2 py-1 rounded-full font-mono text-[8.5px] font-semibold tactile-btn border ${
+        on ? 'bg-white text-zinc-950 border-white' : 'bg-white/[0.05] text-zinc-300 border-white/[0.1]'}`;
+      b.onclick = () => setTexIntent({ target: 'prop', wrap: b.dataset.texwrap });
+    });
+  }
+
+  async function setTexIntent(patch) {
+    const p = getActiveProject(); if (!p) return;
+    const next = { ...(state.texIntent || {}), ...patch };
+    try {
+      const r = await apiCall('/api/texture/intent', {
+        method: 'POST',
+        body: JSON.stringify({ projectId: p.id, target: next.target, wrap: next.wrap || 'around' }),
+      });
+      state.texIntent = r.intent;
+      renderTexIntent();
+      await refreshPromptPreview();
+      const t = TEX_TARGETS.find(x => x[0] === r.intent.target);
+      toast('TEXTURE TARGET', t ? `${t[1]} — ${t[2]}` : r.intent.target, 'ok');
+    } catch (err) { toast('COULD NOT SET', err.message, 'err'); }
+  }
+
+  function renderSlots() {
+    const card = document.getElementById('slots-card');
+    if (!card) return;
+    const info = state.slotInfo;
+    const slots = (info && info.slots) || [];
+    if (!info || (!slots.length && !info.error)) {
+      card.classList.add('hidden'); card.classList.remove('flex'); return;
+    }
+    card.classList.remove('hidden'); card.classList.add('flex');
+    const bound = Object.keys((info.bindings) || {}).length;
+    document.getElementById('slots-count').textContent = info.error
+      ? '' : `${slots.length} colour(s), ${bound} textured`;
+    const list = document.getElementById('slots-list');
+    if (info.error) {
+      list.innerHTML = `<div class="px-2.5 py-2 rounded-xl bg-black/30 border border-dashed border-white/[0.09] font-mono text-[8.5px] text-amber-300/90">${escapeHtml(info.error)}</div>`;
+      return;
+    }
+    // Only textures declared for this kind of surface are offered.
+    const want = info.kind === 'structure' ? 'block' : info.kind;
+    const usable = (state.textureList || []).filter(t =>
+      !t.intent || t.intent.target === want);
+    list.innerHTML = slots.map(sl => {
+      const tex = (info.bindings || {})[sl.hex] || '';
+      const opts = ['<option value="">— flat colour —</option>'].concat(
+        usable.map(t => `<option value="${escapeHtml(t.name)}"${t.name === tex ? ' selected' : ''}>${escapeHtml(t.name)}</option>`)).join('');
+      return `<div class="px-2.5 py-2 rounded-xl border ${tex ? 'border-emerald-400/40 bg-emerald-400/[0.05]' : 'border-white/[0.08] bg-black/30'} flex items-center gap-2 min-w-0">
+        <span class="w-4 h-4 rounded border border-white/25 shrink-0" style="background:${escapeHtml(sl.hex)}" title="${escapeHtml(sl.hex)}"></span>
+        <div class="min-w-0 flex-1">
+          <div class="font-mono text-[9px] text-zinc-200 truncate">${escapeHtml(sl.name || sl.hex)}</div>
+          <div class="font-mono text-[7.5px] text-zinc-500 truncate">x${sl.count}${sl.where && sl.where.length ? ' · ' + escapeHtml(sl.where.slice(0, 2).join(', ')) : ''}</div>
+        </div>
+        <select class="bg-black/50 border border-white/[0.1] rounded-lg px-1.5 py-1 font-mono text-[8.5px] text-zinc-200 max-w-[128px] shrink-0" data-slot-hex="${escapeHtml(sl.hex)}">${opts}</select>
+      </div>`;
+    }).join('')
+      + (usable.length ? '' : `<div class="font-mono text-[8px] text-zinc-500 px-1">No textures declared for ${escapeHtml(want)} yet — open a texture and set THIS TEXTURE IS FOR.</div>`);
+    list.querySelectorAll('[data-slot-hex]').forEach(sel =>
+      sel.addEventListener('change', () => bindSlot(sel.dataset.slotHex, sel.value)));
+  }
+
+  async function bindSlot(hex, texture) {
+    const p = getActiveProject(); if (!p) return;
+    try {
+      const r = await apiCall('/api/slots/bind', {
+        method: 'POST', body: JSON.stringify({ projectId: p.id, hex, texture }),
+      });
+      state.slotInfo = r;
+      renderSlots();
+      await refreshPromptPreview();
+      await rebuildStage();
+      toast(texture ? 'TEXTURE BOUND' : 'BACK TO FLAT COLOUR',
+        texture ? `${hex} → ${texture}` : hex, 'ok');
+    } catch (err) { toast('BIND FAILED', err.message, 'err'); }
+  }
+
+  /* =====================================================================
+   * THE BLOCK PLAN
+   * The app used to pick the block list and simply hand it over, so the
+   * model had no say in what it was given and no reason to think about
+   * it - which is how a building ends up naming four textures that are
+   * not in the workspace. Asked first, it commits to a palette; stored,
+   * that palette becomes the form allow-list and is stated back in every
+   * build prompt, so "use these blocks" is true rather than hopeful.
+   * =================================================================== */
+  async function loadBlockPlan() {
+    const p = getActiveProject();
+    if (!p || !API.LIVE || resolvedTrack(p) !== 'structure') { state.blockPlan = null; return; }
+    try {
+      const r = await apiCall('/api/blockplan', {
+        method: 'POST', body: JSON.stringify({ projectId: p.id }),
+      });
+      const plan = r.plan || null;
+      state.blockPlan = (plan && ((plan.forms || []).length || (plan.materials || []).length)) ? plan : null;
+    } catch { state.blockPlan = null; }
+  }
+
+  function openBlockPlan() {
+    const p = getActiveProject();
+    if (!p) { toast('NO ASSET OPEN', 'Open the structure you are planning.', 'warn'); return; }
+    if (resolvedTrack(p) !== 'structure') {
+      toast('STRUCTURES ONLY', 'Only a build has blocks and materials to plan.', 'warn');
+      return;
+    }
+    const modal = document.getElementById('blockplan-modal');
+    document.getElementById('blockplan-report').classList.add('hidden');
+    document.getElementById('blockplan-input').value = '';
+    const plan = state.blockPlan;
+    document.getElementById('blockplan-current').textContent = plan
+      ? `${(plan.forms || []).length} form(s), ${(plan.materials || []).length} material(s) locked in`
+      : 'no plan yet';
+    modal.classList.remove('hidden'); modal.classList.add('flex');
+    setTimeout(() => document.getElementById('blockplan-input').focus(), 40);
+  }
+
+  (function wireBlockPlan() {
+    const modal = document.getElementById('blockplan-modal');
+    if (!modal) return;
+    const report = document.getElementById('blockplan-report');
+    const close = () => { modal.classList.add('hidden'); modal.classList.remove('flex'); };
+    const show = html => { report.innerHTML = html; report.classList.remove('hidden'); };
+
+    document.getElementById('blockplan-close').addEventListener('click', close);
+    document.getElementById('blockplan-cancel').addEventListener('click', close);
+    modal.addEventListener('click', e => { if (e.target === modal) close(); });
+
+    document.getElementById('blockplan-copy').addEventListener('click', async e => {
+      const p = getActiveProject(); if (!p) return;
+      const btn = e.currentTarget;
+      try {
+        const r = await withBusy('BUILDING THE ASK…', () => apiCall('/api/blockplan/prompt', {
+          method: 'POST',
+          body: JSON.stringify({
+            projectId: p.id,
+            instruction: state.lastInstruction || '',
+            styleLock: state.settings.styleLock || '',
+            style: activeStyle(),
+          }),
+        }));
+        await navigator.clipboard.writeText(r.prompt || '');
+        btn.classList.add('bg-emerald-400/20');
+        setTimeout(() => btn.classList.remove('bg-emerald-400/20'), 700);
+        toast('ASK COPIED', 'It lists all twelve forms and the textures you actually have', 'ok');
+      } catch (err) { show(`<div class="text-red-300">${escapeHtml(err.message)}</div>`); }
+    });
+
+    document.getElementById('blockplan-apply').addEventListener('click', async () => {
+      const p = getActiveProject(); if (!p) return;
+      const text = document.getElementById('blockplan-input').value;
+      try {
+        const r = await withBusy('LOCKING THE PLAN IN…', () => apiCall('/api/blockplan/apply', {
+          method: 'POST', body: JSON.stringify({ projectId: p.id, text }),
+        }));
+        state.blockPlan = { forms: r.forms || [], materials: r.materials || [] };
+        // The allow-list lives in the project style, so apply it there.
+        if ((r.forms || []).length) {
+          setStyle({ forms: CORE_12.filter(x => r.forms.includes(x)) });
+          renderFormsCard();
+        }
+        let h = `<div class="text-emerald-300 font-semibold mb-1">Locked in.</div>`;
+        h += `<div class="text-zinc-300">forms: ${(r.forms || []).map(escapeHtml).join(', ') || '—'}</div>`;
+        h += `<div class="text-zinc-400 mt-1">${(r.materials || []).map(m =>
+          `${escapeHtml(m.alias)} → ${escapeHtml(m.texture || 'colour only')}`).join('<br>')}</div>`;
+        if ((r.rejectedForms || []).length) {
+          h += `<div class="text-amber-300 mt-2">not one of the twelve, dropped: ${r.rejectedForms.map(escapeHtml).join(', ')}</div>`;
+        }
+        if ((r.missingTextures || []).length) {
+          h += `<div class="text-amber-300 mt-2">these textures do not exist yet: ${r.missingTextures.map(escapeHtml).join(', ')}<br>`
+            + `<span class="text-zinc-400">Make them as texture assets under exactly these names, or the build renders flat colour.</span></div>`;
+        }
+        show(h);
+        document.getElementById('blockplan-current').textContent =
+          `${(r.forms || []).length} form(s), ${(r.materials || []).length} material(s) locked in`;
+        await refreshPromptPreview();
+        toast('PLAN LOCKED IN',
+          `${(r.forms || []).length} forms, ${(r.materials || []).length} materials`
+          + ((r.missingTextures || []).length ? ` · ${r.missingTextures.length} texture(s) still to make` : ''),
+          (r.missingTextures || []).length ? 'warn' : 'ok');
+      } catch (err) {
+        show(`<div class="text-red-300">${escapeHtml(err.message)}</div>`);
+      }
+    });
+  })();
+
+  /* =====================================================================
+   * PROJECTS
+   * A project is a top-level folder treated as a repository: every asset
+   * under its root belongs to it. Until now the only "project" in the app
+   * was a single asset, so there was nothing above a folder, no way to see
+   * which project you were in, and history only ever existed inside one
+   * asset. The selector lives in the top bar - where an IDE puts it - and
+   * not in a sidebar card.
+   * =================================================================== */
+  function activeWorkspace() {
+    const id = state.settings.activeWorkspaceId || '';
+    return (state.workspaces || []).find(w => w.id === id) || null;
+  }
+
+  function activeWorkspaceRoot() {
+    const w = activeWorkspace();
+    return w ? w.root : '';
+  }
+
+  function renderProjectChip() {
+    const label = document.getElementById('top-project-label');
+    const count = document.getElementById('top-project-count');
+    if (!label) return;
+    const w = activeWorkspace();
+    const all = (state.workspaces || []).length;
+    label.textContent = w ? w.name : 'All projects';
+    count.textContent = w ? `${w.assets}` : (all ? `${all} projects` : 'no projects yet');
+  }
+
+  async function setActiveWorkspace(id) {
+    state.settings.activeWorkspaceId = id || '';
+    await syncSettings({ activeWorkspaceId: id || '' });
+    renderProjectChip();
+    renderAll();
+    const w = activeWorkspace();
+    toast(w ? 'PROJECT' : 'ALL PROJECTS',
+      w ? `${w.name} — ${w.assets} asset(s) under ${w.root}` : 'Showing every folder', 'ok');
+  }
+
+  function projectMenu(ev) {
+    const items = [];
+    const cur = state.settings.activeWorkspaceId || '';
+    (state.workspaces || []).forEach(w => {
+      items.push({
+        label: `${w.name}   ${w.assets} asset(s)`,
+        icon: w.id === cur ? 'radio_button_checked' : 'radio_button_unchecked',
+        onPick: () => setActiveWorkspace(w.id),
+      });
+    });
+    items.push({
+      label: 'All projects', icon: cur ? 'radio_button_unchecked' : 'radio_button_checked',
+      onPick: () => setActiveWorkspace(''),
+    });
+    items.push('-');
+    items.push({ label: 'New project from a folder…', icon: 'create_new_folder', onPick: newWorkspace });
+    if (cur) {
+      items.push({ label: 'Project history…', icon: 'history', onPick: () => openProjectHistory(cur) });
+      items.push({ label: 'Rename this project…', icon: 'edit', onPick: renameWorkspace });
+      items.push({ label: 'Forget this project', icon: 'delete', danger: true, onPick: forgetWorkspace });
+    }
+    const r = ev.currentTarget.getBoundingClientRect();
+    openCtxMenu(r.left, r.bottom + 6, items, 'PROJECT');
+  }
+
+  async function newWorkspace() {
+    const name = await askText({ title: 'NEW PROJECT', label: 'Project name',
+      help: 'e.g. STRATA — this is the repository everything under it belongs to', value: '' });
+    if (!name || !name.trim()) return;
+    const root = await askText({ title: `ROOT FOLDER FOR ${name.trim().toUpperCase()}`,
+      label: 'Top-level folder', value: name.trim().toUpperCase().replace(/[^A-Z0-9_-]+/g, '-'),
+      help: 'Every asset under this folder belongs to the project. It is created if it does not exist.' });
+    if (!root || !root.trim()) return;
+    try {
+      const r = await apiCall('/api/workspaces/save', {
+        method: 'POST', body: JSON.stringify({ name: name.trim(), root: root.trim() }),
+      });
+      state.workspaces = r.workspaces || [];
+      // The root folder is created server-side, so reload the tree with it.
+      const boot = await apiCall('/api/bootstrap', { method: 'GET' }, true);
+      applyBootstrapState(boot);
+      await setActiveWorkspace(r.id);
+    } catch (err) { toast('COULD NOT CREATE', err.message, 'err'); }
+  }
+
+  async function renameWorkspace() {
+    const w = activeWorkspace(); if (!w) return;
+    const name = await askText({ title: 'RENAME PROJECT', label: 'Project name', value: w.name,
+      help: 'The root folder is not changed.' });
+    if (!name || !name.trim()) return;
+    try {
+      const r = await apiCall('/api/workspaces/save', {
+        method: 'POST', body: JSON.stringify({ id: w.id, name: name.trim(), root: w.root }),
+      });
+      state.workspaces = r.workspaces || [];
+      renderProjectChip();
+    } catch (err) { toast('RENAME FAILED', err.message, 'err'); }
+  }
+
+  async function forgetWorkspace() {
+    const w = activeWorkspace(); if (!w) return;
+    if (!await askConfirm({ title: 'FORGET PROJECT', danger: true, confirmLabel: 'FORGET',
+      body: `Forget “${w.name}”? The folder ${w.root} and everything in it stays exactly where it is — only the project grouping goes.` })) return;
+    try {
+      const r = await apiCall('/api/workspaces/delete', {
+        method: 'POST', body: JSON.stringify({ id: w.id }),
+      });
+      state.workspaces = r.workspaces || [];
+      await setActiveWorkspace('');
+    } catch (err) { toast('COULD NOT FORGET', err.message, 'err'); }
+  }
+
+  async function openProjectHistory(id) {
+    const modal = document.getElementById('prjhist-modal');
+    const body = document.getElementById('prjhist-body');
+    modal.classList.remove('hidden'); modal.classList.add('flex');
+    body.innerHTML = '<div class="font-mono text-[9px] text-zinc-500 py-6 text-center">reading the project…</div>';
+    try {
+      const r = await apiCall('/api/workspaces/history', {
+        method: 'POST', body: JSON.stringify({ id, limit: 200 }),
+      });
+      document.getElementById('prjhist-title').textContent = `${r.project.name} — PROJECT HISTORY`;
+      document.getElementById('prjhist-sub').textContent =
+        `${r.total} revision(s) across ${r.assets} asset(s) under ${r.project.root}`;
+      if (!r.events.length) {
+        body.innerHTML = '<div class="font-mono text-[9px] text-zinc-500 py-6 text-center">Nothing in this project yet.</div>';
+        return;
+      }
+      // Grouped by day, which is how you actually ask "what changed".
+      const byDay = new Map();
+      r.events.forEach(e => {
+        const d = (e.at || '').slice(0, 10);
+        if (!byDay.has(d)) byDay.set(d, []);
+        byDay.get(d).push(e);
+      });
+      body.innerHTML = [...byDay.entries()].map(([day, evs]) => `
+        <div class="mb-3">
+          <div class="font-mono text-[8.5px] text-zinc-500 uppercase tracking-wider mb-1 sticky top-0 bg-[#0d0f14] py-1">${escapeHtml(day)} · ${evs.length}</div>
+          <div class="flex flex-col gap-1">
+            ${evs.map(e => `
+              <div class="px-2.5 py-1.5 rounded-xl bg-white/[0.04] border border-white/[0.07] flex items-center gap-2 min-w-0 cursor-pointer hover:bg-white/[0.08]" data-hist-asset="${escapeHtml(e.assetId)}">
+                <span class="font-mono text-[7.5px] px-1.5 py-0.5 rounded-full shrink-0 ${
+                  e.kind === 'added' ? 'bg-emerald-400/15 text-emerald-300 border border-emerald-400/25'
+                                     : 'bg-white/[0.07] text-zinc-300 border border-white/10'}">${e.kind === 'added' ? 'ADDED' : 'REVISED'}</span>
+                <span class="font-mono text-[9px] text-zinc-200 truncate">${escapeHtml(e.asset)}</span>
+                <span class="font-mono text-[8px] text-zinc-500 shrink-0">${escapeHtml(e.tag)}</span>
+                <span class="font-mono text-[7.5px] px-1.5 py-0.5 rounded-full shrink-0 ${
+                  e.status === 'PASS' ? 'text-emerald-300' : 'text-red-300'}">${escapeHtml(e.status)}</span>
+                <span class="font-mono text-[8px] text-zinc-500 truncate flex-1">${escapeHtml(e.note || '')}</span>
+                <span class="font-mono text-[7.5px] text-zinc-600 shrink-0">${escapeHtml((e.folder || '').split('/').slice(-1)[0] || '')}</span>
+              </div>`).join('')}
+          </div>
+        </div>`).join('');
+      body.querySelectorAll('[data-hist-asset]').forEach(el =>
+        el.addEventListener('click', () => {
+          modal.classList.add('hidden'); modal.classList.remove('flex');
+          openAsset(el.dataset.histAsset);
+        }));
+    } catch (err) {
+      body.innerHTML = `<div class="font-mono text-[9px] text-red-300 py-6 text-center">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
   async function boot() {
     try {
       const b = await apiCall('/api/bootstrap', { method: 'GET' }, true);
@@ -7979,6 +10448,8 @@
         applyBootstrapState(b, true);
         state.lastInstruction = loadInstruction();
         renderAll();
+        await loadPalettes();
+        await loadAssetMeta();
         await rebuildStage();
         await refreshPromptPreview();
         if (API.engine !== 'DESIGNBRIDGE_CORE') {
